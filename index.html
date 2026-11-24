@@ -1,0 +1,744 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jarvis</title>
+<meta name="description" content="Jarvis: your own AI assistant for PC and phone. Chat, code, 3D, images, video, and it uses your computer for you.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #eef1f6; --ink-2: #a9b1bf; --ink-3: #6c7586; --paper: #040507;
+    --arc: #36c8ff; --arc-deep: #4cc4ff; --arc-soft: rgba(54,200,255,0.14);
+    /* PC app */
+    --bg: #0a0c11; --surface: #10131a; --surface-2: #161a23;
+    --line: rgba(255,255,255,0.07); --line-2: rgba(255,255,255,0.12);
+    --text: #e8ebf2; --muted: #8b93a7; --faint: #5c6377; --accent: #4d8dff; --accent2: #62d2ff;
+    /* phone app */
+    --p-line: rgba(255,255,255,0.09); --p-text: #f4f6fa; --p-dim: #9ca5b3; --p-arc: #5ce1ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { background: var(--paper); }
+  body { font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); background: var(--paper);
+         -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+
+  /* ---------- the stage: one fixed screen, the long page underneath only drives it ---------- */
+  #stage { position: fixed; inset: 0; overflow: hidden; background: var(--paper); }
+  #film { position: absolute; inset: 0; width: 100%; height: 100%; display: block; transition: filter .4s, opacity .4s; }
+  #film.dim { filter: blur(7px) saturate(0.8); opacity: 0.35; }
+  #track { position: relative; width: 1px; pointer-events: none; }
+
+  /* ---------- opening screen ---------- */
+  #intro { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px;
+           transition: opacity .5s, transform .5s; }
+  #intro.gone { opacity: 0; transform: translateY(-30px); pointer-events: none; }
+  .brand { font-weight: 800; font-size: clamp(56px, 11vw, 148px); letter-spacing: -0.045em; line-height: 0.9; }
+  .brand span { color: var(--arc-deep); }
+  .tag { margin-top: 18px; font-size: clamp(16px, 2vw, 21px); color: var(--ink-2); max-width: 34ch; margin-inline: auto; line-height: 1.45; }
+  .enter { margin-top: 34px; display: inline-flex; align-items: center; gap: 10px; height: 50px; padding: 0 26px;
+           border-radius: 999px; background: #fff; color: #05070a; font-weight: 600; font-size: 16px;
+           box-shadow: 0 0 40px rgba(54,200,255,.25); transition: transform .15s, box-shadow .15s; }
+  .enter:hover { transform: translateY(-1px); box-shadow: 0 0 56px rgba(54,200,255,.4); }
+  .enter:focus-visible, .sound:focus-visible, .dl:focus-visible, .mode:focus-visible, .p-item:focus-visible { outline: 3px solid var(--arc); outline-offset: 3px; }
+  .hint { margin-top: 16px; font-size: 13px; color: var(--ink-3); }
+  .scroll-cue { position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%); font-size: 12px; letter-spacing: .14em;
+                text-transform: uppercase; color: var(--ink-3); display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .scroll-cue i { width: 1px; height: 38px; background: linear-gradient(var(--ink-3), transparent); animation: cue 1.8s infinite; }
+  @keyframes cue { 0% { transform: scaleY(0); transform-origin: top; } 50% { transform: scaleY(1); transform-origin: top; }
+                   51% { transform-origin: bottom; } 100% { transform: scaleY(0); transform-origin: bottom; } }
+  .sound { position: fixed; top: 16px; right: 16px; z-index: 50; width: 42px; height: 42px; border-radius: 50%;
+           background: rgba(20,24,32,.7); border: 1px solid rgba(255,255,255,.12); display: grid; place-items: center;
+           backdrop-filter: blur(8px); }
+  .sound svg { width: 20px; height: 20px; }
+  #loadbar { position: fixed; left: 0; top: 0; height: 2px; background: var(--arc); width: 0; z-index: 60; transition: width .2s, opacity .6s; }
+
+  /* ---------- hologram ---------- */
+  #holo { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; perspective: 1400px; }
+  .device { position: absolute; left: 0; top: 0; transform-origin: 50% 50%; opacity: 0; will-change: transform, opacity; }
+  .device.live { pointer-events: auto; }
+  .holo-fx::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+                    background: repeating-linear-gradient(0deg, rgba(120,220,255,.12) 0 1px, transparent 1px 3px);
+                    mix-blend-mode: screen; opacity: var(--scan, 0); }
+  .device .glow { position: absolute; inset: -2px; border-radius: inherit; pointer-events: none;
+                  box-shadow: 0 0 0 1px rgba(90,210,255,.7), 0 0 40px rgba(54,200,255,.55), 0 0 120px rgba(54,200,255,.35);
+                  opacity: var(--holo, 0); }
+  .beamcone { position: absolute; pointer-events: none; transform-origin: 0 50%; height: 2px; opacity: 0;
+              background: linear-gradient(90deg, rgba(54,200,255,.9), rgba(54,200,255,0)); filter: blur(.5px); }
+
+  /* PC app window (design only) */
+  .pc { width: 1120px; height: 680px; border-radius: 14px; background: var(--bg); color: var(--text); overflow: hidden;
+        display: grid; grid-template-rows: 34px 1fr; border: 1px solid #222838; box-shadow: 0 40px 120px rgba(5,10,25,.45); }
+  .pc .chrome { display: flex; align-items: center; gap: 8px; padding: 0 12px; font-size: 12px; color: var(--muted);
+                border-bottom: 1px solid var(--line); background: #0c0f15; }
+  .pc .chrome b { width: 9px; height: 9px; border-radius: 50%; background: linear-gradient(135deg, #8fd8ff, #2f7dff); }
+  .pc .chrome .win { margin-left: auto; letter-spacing: 14px; color: var(--faint); }
+  .pc .body { display: grid; grid-template-columns: 228px 1fr; min-height: 0; }
+  .pc .side { background: var(--surface); border-right: 1px solid var(--line); padding: 14px 10px; display: flex; flex-direction: column; gap: 2px; }
+  .pc .logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16px; padding: 4px 8px 16px; }
+  .pc .logo i { width: 24px; height: 24px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #bfeaff, #3b8bff 60%, #1d4fb8); }
+  .mode { display: flex; align-items: center; gap: 11px; height: 36px; padding: 0 10px; border-radius: 9px; color: #c9cfdc;
+          font-size: 14px; text-align: left; transition: background .15s; }
+  .mode svg { width: 17px; height: 17px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; opacity: .85; }
+  .mode .k { margin-left: auto; font-size: 11px; color: var(--faint); }
+  .mode:hover { background: rgba(255,255,255,.04); }
+  .mode.on { background: rgba(77,141,255,.14); color: #fff; box-shadow: inset 0 0 0 1px rgba(77,141,255,.35); }
+  .pc .recents { margin-top: 16px; padding: 0 10px; font-size: 10.5px; letter-spacing: .12em; color: var(--faint); }
+  .pc .rec { font-size: 12.5px; color: var(--muted); padding: 7px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pc .main { display: grid; grid-template-rows: 64px 1fr auto; min-width: 0;
+              background: radial-gradient(ellipse at 50% 30%, #121a2b 0%, var(--bg) 60%); }
+  .pc .head { display: flex; align-items: center; gap: 12px; padding: 0 22px; border-bottom: 1px solid var(--line); }
+  .pc .head .ic { width: 34px; height: 34px; border-radius: 9px; border: 1px solid var(--line-2); display: grid; place-items: center; color: var(--accent2); }
+  .pc .head .ic svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.7; }
+  .pc .head h3 { font-size: 15px; font-weight: 600; }
+  .pc .head p { font-size: 12px; color: var(--muted); }
+  .pc .empty { display: grid; place-items: center; text-align: center; padding: 20px; }
+  .pc .empty h2 { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; }
+  .pc .empty p { margin-top: 8px; color: var(--muted); font-size: 14px; }
+  .pc .chips { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  .pc .chips span { font-size: 12.5px; padding: 8px 12px; border-radius: 9px; background: var(--surface-2); border: 1px solid var(--line); color: #c9cfdc; }
+  .pc .input { margin: 0 auto 22px; width: min(640px, 86%); height: 76px; border-radius: 14px; background: var(--surface);
+               border: 1px solid var(--line-2); padding: 14px 16px; font-size: 13.5px; color: var(--faint); position: relative; }
+  .pc .input .send { position: absolute; right: 12px; bottom: 12px; width: 30px; height: 30px; border-radius: 8px; background: var(--accent); }
+
+  /* phone apps (design only) */
+  .phone { width: 360px; height: 740px; border-radius: 52px; background: #000; color: var(--p-text); overflow: hidden; position: relative;
+           border: 10px solid #15171c; box-shadow: 0 0 0 1px #2a2e38, 0 40px 120px rgba(5,10,25,.45); display: flex; flex-direction: column; }
+  .phone .notch { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); width: 92px; height: 26px; border-radius: 20px; background: #000;
+                  box-shadow: 0 0 0 1px #111; z-index: 2; }
+  .phone .status { height: 44px; display: flex; align-items: center; justify-content: space-between; padding: 6px 26px 0; font-size: 13px; font-weight: 600; }
+  .phone .top { padding: 10px 20px 14px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--p-line); }
+  .phone .orb { width: 34px; height: 34px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #c8f4ff, #5ce1ff 45%, #0b5d86); box-shadow: 0 0 24px rgba(92,225,255,.45); }
+  .phone .top h3 { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+  .phone .top p { font-size: 12px; color: var(--p-dim); }
+  .phone .list { flex: 1; overflow: hidden; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; }
+  .p-item { display: flex; align-items: center; gap: 14px; height: 46px; padding: 0 14px; border-radius: 14px; font-size: 15.5px; text-align: left; color: #dfe4ec; }
+  .p-item svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; color: var(--p-dim); }
+  .p-item:hover { background: rgba(255,255,255,.04); }
+  .p-item.on { background: rgba(92,225,255,.1); box-shadow: inset 0 0 0 1px rgba(92,225,255,.45); color: #fff; }
+  .p-item.on svg { color: var(--p-arc); }
+  .phone .composer { margin: 8px 14px 16px; height: 50px; border-radius: 25px; border: 1px solid var(--p-line); display: flex; align-items: center; padding: 0 18px; color: #5e6775; font-size: 14px; }
+  .phone .bar { height: 5px; width: 120px; border-radius: 3px; background: #fff; opacity: .85; margin: 0 auto 8px; }
+  .ios .top h3 { font-size: 30px; font-weight: 800; letter-spacing: -0.03em; }
+  .ios .top { flex-direction: column; align-items: flex-start; gap: 2px; }
+  .ios .soon { position: absolute; top: 58px; right: 18px; font-size: 11px; font-weight: 600; padding: 5px 9px; border-radius: 999px;
+               background: rgba(92,225,255,.12); color: var(--p-arc); border: 1px solid rgba(92,225,255,.4); }
+  .ios .p-item { border-radius: 12px; }
+
+  /* section title over the stage */
+  #sect { position: absolute; left: 50%; top: 4.5vh; transform: translateX(-50%); text-align: center; opacity: 0; transition: opacity .35s;
+          pointer-events: none; width: min(92vw, 720px); }
+  #sect small { font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: var(--arc-deep); font-weight: 600; }
+  #sect h2 { font-size: clamp(22px, 3vw, 34px); letter-spacing: -0.025em; margin-top: 4px; }
+  #sect p { color: var(--ink-2); font-size: 14px; margin-top: 4px; }
+
+  /* the "what is it for" card, bottom right */
+  #info { position: absolute; right: 24px; bottom: 24px; width: min(380px, calc(100vw - 32px)); border-radius: 16px; padding: 18px 20px 20px;
+          background: rgba(12,15,21,.82); backdrop-filter: blur(14px); border: 1px solid rgba(255,255,255,.1);
+          box-shadow: 0 20px 60px rgba(0,0,0,.5); opacity: 0; transform: translateY(16px); transition: opacity .3s, transform .3s; pointer-events: none; }
+  #info.on { opacity: 1; transform: none; }
+  #info .t { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; letter-spacing: -0.01em; }
+  #info .t i { width: 8px; height: 8px; border-radius: 50%; background: var(--arc); box-shadow: 0 0 12px var(--arc); }
+  #info h4 { margin-top: 12px; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); }
+  #info p { margin-top: 4px; font-size: 14.5px; line-height: 1.5; color: var(--ink-2); }
+
+  /* ---------- the shot: cracks + broken corner ---------- */
+  #cracks { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  #shake { position: absolute; inset: 0; }
+  .shake { animation: shake .45s cubic-bezier(.36,.07,.19,.97); }
+  @keyframes shake { 10%,90% { transform: translate(-2px,1px); } 20%,80% { transform: translate(5px,-3px); }
+                     30%,50%,70% { transform: translate(-9px,4px); } 40%,60% { transform: translate(9px,-4px); } }
+  #flash { position: absolute; inset: 0; background: radial-gradient(circle at var(--fx,10%) var(--fy,10%), rgba(200,245,255,.95), rgba(54,200,255,.25) 30%, transparent 60%);
+           opacity: 0; pointer-events: none; }
+
+  /* ---------- downloads ---------- */
+  #downloads { position: absolute; left: 50%; bottom: 9vh; transform: translate(-50%, 30px); width: min(980px, calc(100vw - 32px));
+               opacity: 0; pointer-events: none; transition: opacity .5s, transform .5s; text-align: center; }
+  #downloads.on { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+  #downloads h2 { font-size: clamp(26px, 4vw, 44px); letter-spacing: -0.035em; font-weight: 800; }
+  #downloads > p { color: var(--ink-2); margin-top: 6px; }
+  .dls { margin-top: 22px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .dl { display: flex; align-items: center; gap: 14px; padding: 16px 18px; border-radius: 16px; background: #fff; color: #05070a; text-align: left;
+        text-decoration: none; box-shadow: 0 0 40px rgba(54,200,255,.22); transition: transform .15s; }
+  .dl:hover { transform: translateY(-2px); }
+  .dl svg { width: 30px; height: 30px; flex: none; fill: currentColor; }
+  .dl small { display: block; font-size: 11.5px; color: #5a6272; }
+  .dl b { font-size: 16px; font-weight: 600; }
+  .dl.soon { background: rgba(255,255,255,.05); color: var(--ink); border: 1px solid rgba(255,255,255,.14); box-shadow: none; cursor: default; }
+  .dl.soon small { color: var(--ink-3); }
+  .credit { margin-top: 18px; font-size: 11.5px; color: var(--ink-3); }
+  .credit a { color: inherit; }
+
+  @media (max-width: 720px) {
+    .dls { grid-template-columns: 1fr; }
+    #info { right: 16px; bottom: 16px; }
+    #downloads { bottom: 4vh; }
+  }
+  @media (prefers-reduced-motion: reduce) { .shake { animation: none; } .scroll-cue i { animation: none; } }
+</style>
+</head>
+<body>
+<div id="loadbar"></div>
+<button class="sound" id="sound" aria-label="Sound on or off" title="Sound">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path id="snd-on" d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/><path id="snd-off" d="m16 9 5 6m0-6-5 6" style="display:none"/></svg>
+</button>
+
+<div id="stage">
+  <div id="shake">
+    <canvas id="film" aria-hidden="true"></canvas>
+    <div id="holo" aria-live="polite"></div>
+    <div id="flash"></div>
+    <canvas id="cracks" aria-hidden="true"></canvas>
+  </div>
+
+  <section id="intro">
+    <div>
+      <div class="brand">JARVIS<span>.</span></div>
+      <p class="tag">Your own AI assistant, on your PC and your phone. Scroll, and let it introduce itself.</p>
+      <button class="enter" id="enter">Enter with sound
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+      <p class="hint">or just scroll</p>
+    </div>
+    <div class="scroll-cue">Scroll<i></i></div>
+  </section>
+
+  <div id="sect"><small></small><h2></h2><p></p></div>
+
+  <aside id="info" role="status"><div class="t"><i></i><span></span></div>
+    <h4>What it's for</h4><p class="for"></p>
+    <h4>What it's good at</h4><p class="good"></p></aside>
+
+  <section id="downloads" aria-label="Downloads">
+    <h2>Get Jarvis</h2>
+    <p>Free. Runs on your own computer.</p>
+    <div class="dls">
+      <a class="dl" id="dl-android" href="#" download>
+        <svg viewBox="0 0 24 24"><path d="M17.6 9.5 19.4 6.3a.4.4 0 0 0-.7-.4l-1.8 3.2A11 11 0 0 0 12 8a11 11 0 0 0-4.9 1.1L5.3 5.9a.4.4 0 0 0-.7.4l1.8 3.2A9.6 9.6 0 0 0 1.5 17h21a9.6 9.6 0 0 0-4.9-7.5ZM7 14.3a1 1 0 1 1 0-2 1 1 0 0 1 0 2Zm10 0a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"/></svg>
+        <span><small>Download for</small><b>Android</b></span></a>
+      <span class="dl soon" aria-disabled="true">
+        <svg viewBox="0 0 24 24"><path d="M16.4 12.6c0-2.4 2-3.5 2-3.6a4.3 4.3 0 0 0-3.4-1.8c-1.4-.2-2.8.8-3.5.8s-1.8-.8-3-.8a4.5 4.5 0 0 0-3.8 2.3c-1.6 2.8-.4 7 1.2 9.3.8 1.1 1.7 2.4 2.9 2.3 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.3 0 2-1.1 2.8-2.3a9.6 9.6 0 0 0 1.3-2.6 3.9 3.9 0 0 1-2.5-3.6ZM14.1 5.5A4 4 0 0 0 15 2.5a4.1 4.1 0 0 0-2.7 1.4 3.8 3.8 0 0 0-1 2.8 3.4 3.4 0 0 0 2.8-1.2Z"/></svg>
+        <span><small>Coming soon</small><b>iPhone</b></span></span>
+      <a class="dl" id="dl-pc" href="#" download>
+        <svg viewBox="0 0 24 24"><path d="M3 5.5 10.4 4.5v7H3zM11.3 4.4 21 3v8.5h-9.7zM3 12.4h7.4v7L3 18.4zM11.3 12.4H21V21l-9.7-1.4z"/></svg>
+        <span><small>Download for</small><b>Windows PC</b></span></a>
+    </div>
+    <p class="credit">Armor 3D model by <a href="https://sketchfab.com/" rel="noopener">9A Films / Nihar Arora</a>, original by LLlypuk, licensed CC BY 4.0.</p>
+  </section>
+</div>
+
+<div id="track"></div>
+
+<script>
+// ===================================================================== settings
+// Frames rendered in Blender (blender/anim.py). The page is one long scroll that plays them.
+const FRAMES = 451, FRAME_URL = (i) => `frames/${String(i).padStart(4, '0')}.webp`;
+const FRAME_W = 1920, FRAME_H = 1080;
+const MARK = { stand: 150, raised: 185, holo: 240, loopEnd: 300, aimed: 340, fire: 385, end: 450 };
+const BEAM_HIT = [0.075, 0.1];          // where the beam leaves the frame (fraction of the 16:9 picture)
+const PALM_AT_HOLO = [0.286, 0.214];        // the palm on screen at frame 240 (set by blender/marks.json)
+
+// Scroll sections: vh = how much scrolling each takes.
+const SECTIONS = [
+  { id: 'start',   vh: 60 },
+  { id: 'fly',     vh: 240, frames: [0, MARK.stand] },
+  { id: 'charge',  vh: 160, frames: [MARK.stand, MARK.holo] },
+  { id: 'open',    vh: 110 },               // hologram grows from the palm to the screen
+  { id: 'pc',      vh: 240 },
+  { id: 'android', vh: 240 },
+  { id: 'ios',     vh: 220 },
+  { id: 'close',   vh: 110 },               // back into the palm
+  { id: 'aim',     vh: 200, frames: [MARK.loopEnd, MARK.fire] },
+  { id: 'fire',    vh: 110, frames: [MARK.fire, MARK.end] },
+  { id: 'get',     vh: 90 },
+];
+
+const PC_MODES = [
+  { k: 'all', name: 'All in one', key: 1, icon: 'spark', title: 'Ask me anything', sub: 'Chat, code, your computer, images, video and 3D in one place',
+    for: 'One box for everything. Type or talk, and Jarvis decides by itself whether to answer, write code, use your computer, or make an image, a video or a 3D model.',
+    good: 'Days when you do not want to think about modes. It picks the right tool and remembers the conversation.' },
+  { k: 'chat', name: 'Chat', key: 2, icon: 'chat', title: 'What can I help with?', sub: 'Questions, writing, ideas, explanations',
+    for: 'Talking with an AI that runs on your own PC: questions, emails, summaries, plans, translations.',
+    good: 'Private answers. Your chats stay on your computer, and it works without sending your data to anyone.' },
+  { k: 'code', name: 'Code', key: 3, icon: 'code', title: 'What are we building?', sub: 'Writes, explains and fixes code in your projects',
+    for: 'Programming help inside your own project folders: new features, bug fixes, explanations of code you did not write.',
+    good: 'Reading a whole project before it changes anything, and testing what it wrote.' },
+  { k: 'computer', name: 'Computer use', key: 4, icon: 'monitor', title: 'What should I do on your PC?', sub: 'Jarvis moves the mouse and types for you',
+    for: 'Tasks on your computer: open apps, find files, fill in forms, click through websites, change settings.',
+    good: 'Boring multi-step jobs. You watch it work and can stop it at any moment.' },
+  { k: 'agent', name: 'Agent', key: 5, icon: 'bot', title: 'Give me a bigger job', sub: 'Long tasks with tools, until they are done',
+    for: 'Work that takes many steps: research a topic, gather the results, write them up.',
+    good: 'Keeping going by itself and checking its own work along the way.' },
+  { k: 'phone', name: 'Phone', key: 6, icon: 'phone', title: 'Your phone, connected', sub: 'Steer the PC from your phone and back',
+    for: 'Linking your phone to your PC with one tap, end-to-end encrypted, no passwords to type.',
+    good: 'Starting a task on the PC from the couch, and getting the result on your phone.' },
+  { k: '3d', name: '3D', key: 7, icon: 'cube', title: 'What should I build?', sub: 'Text to photorealistic 3D models',
+    for: 'Turning words into 3D models. Name a thing, pick one of six real photos, and Jarvis sculpts it in 3D.',
+    good: 'Real objects in full colour. Spin them, edit them ("make it shinier"), animate them, keep them.' },
+  { k: 'image', name: 'Image', key: 8, icon: 'image', title: 'Describe a picture', sub: 'Photorealistic images from a sentence',
+    for: 'Making pictures from a description: products, places, people, ideas for a presentation.',
+    good: 'Realistic photos that look like they were taken with a camera.' },
+  { k: 'video', name: 'Video', key: 9, icon: 'video', title: 'Describe a scene', sub: 'Short clips with sound',
+    for: 'Short video clips, with matching sound, made from a description or a picture.',
+    good: 'Bringing a still picture to life in a few seconds.' },
+];
+const PHONE_ITEMS = [
+  { k: 'search', name: 'Search', icon: 'search', for: 'Finding anything: on the web, in your chats, on your PC.', good: 'Short, sourced answers instead of ten blue links.' },
+  { k: 'chat', name: 'Chat', icon: 'chat', for: 'The same Jarvis as on your PC, in your pocket. Type or talk.', good: 'Your chats follow you between phone and PC.' },
+  { k: 'code', name: 'Code', icon: 'code', for: 'Asking for code changes on your PC projects while you are away.', good: 'Checking and approving work from anywhere.' },
+  { k: 'voice', name: 'Voice', icon: 'wave', for: 'A real spoken conversation with Jarvis, hands free.', good: 'Fast back-and-forth while you walk or drive.' },
+  { k: 'image', name: 'Image', icon: 'image', for: 'Making pictures from a sentence; your PC does the heavy work.', good: 'Full PC quality on a phone that could never make it alone.' },
+  { k: 'video', name: 'Video', icon: 'video', for: 'Short clips with sound, made on your PC, sent to your phone.', good: 'Starting a long render and getting a ping when it is done.' },
+  { k: '3d', name: '3D', icon: 'cube', for: 'Building 3D models from your phone and spinning them with your finger.', good: 'Showing someone an idea in 3D in a few minutes.' },
+  { k: 'computer', name: 'Computer', icon: 'monitor', for: 'Telling your PC what to do while you are not at it.', good: '"Open my project and run the tests", from the bus.' },
+  { k: 'phone', name: 'Phone', icon: 'phone', for: 'Jarvis using this phone for you: timers, alarms, music, apps.', good: 'Long-press home and just say it. "Set a timer for 30 minutes."' },
+  { k: 'pc', name: 'PC', icon: 'pc', for: 'The link to your computer, always on, encrypted end to end.', good: 'Connecting once and never typing a password again.' },
+];
+const IOS_ITEMS = PHONE_ITEMS.filter((x) => x.k !== 'phone').map((x) => x.k === 'chat'
+  ? { ...x, good: 'Your chats follow you between iPhone and PC. (The iPhone app is coming soon.)' } : x);
+
+const ICON = {
+  spark: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M18 6l-2.5 2.5M8.5 15.5 6 18"/>',
+  chat: '<path d="M4 5h16v11H9l-5 4z"/>',
+  code: '<path d="m9 8-4 4 4 4M15 8l4 4-4 4"/>',
+  monitor: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+  bot: '<rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 4v4M9 13h.01M15 13h.01"/>',
+  phone: '<rect x="7" y="3" width="10" height="18" rx="2.5"/><path d="M11 18h2"/>',
+  cube: '<path d="m12 3 8 4.5v9L12 21l-8-4.5v-9z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>',
+  video: '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="m16 10 5-3v10l-5-3"/>',
+  search: '<circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5"/>',
+  wave: '<path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4"/>',
+  pc: '<rect x="2" y="4" width="20" height="13" rx="2"/><path d="M7 21h10"/>',
+};
+const svg = (n) => `<svg viewBox="0 0 24 24">${ICON[n] || ''}</svg>`;
+
+// ===================================================================== layout of the scroll
+const track = document.getElementById('track');
+const total = SECTIONS.reduce((a, s) => a + s.vh, 0);
+track.style.height = (total + 100) + 'vh';
+function where() {
+  const vh = innerHeight / 100;
+  let y = scrollY / vh;
+  for (const s of SECTIONS) {
+    if (y < s.vh) return { s, p: Math.max(0, y / s.vh) };
+    y -= s.vh;
+  }
+  const s = SECTIONS[SECTIONS.length - 1];
+  return { s, p: 1 };
+}
+const smooth = (t) => t * t * (3 - 2 * t);
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+
+// ===================================================================== frames
+const film = document.getElementById('film');
+const fctx = film.getContext('2d');
+const imgs = new Array(FRAMES);
+let loaded = 0;
+const loadbar = document.getElementById('loadbar');
+function loadFrame(i) {
+  if (imgs[i]) return;
+  const im = new Image();
+  im.decoding = 'async';
+  im.onload = () => { loaded++; loadbar.style.width = (100 * loaded / FRAMES) + '%'; if (loaded === FRAMES) loadbar.style.opacity = 0; if (Math.abs(i - want) < 3) draw(); };
+  im.src = FRAME_URL(i);
+  imgs[i] = im;
+}
+// coarse to fine: every 8th frame first, so scrubbing works before everything is in
+for (const step of [8, 4, 2, 1]) for (let i = 0; i < FRAMES; i += step) loadFrame(i);
+
+let want = 0, shownFrame = -1;
+function fit() {
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  film.width = Math.round(innerWidth * dpr);
+  film.height = Math.round(innerHeight * dpr);
+  cracks.width = film.width; cracks.height = film.height;
+  shownFrame = -1;
+}
+// cover-fit of the 16:9 picture on this screen (phones: keep him in the middle)
+function cover() {
+  const s = Math.max(innerWidth / FRAME_W, innerHeight / FRAME_H);
+  return { s, x: (innerWidth - FRAME_W * s) / 2, y: (innerHeight - FRAME_H * s) / 2 };
+}
+function toScreen(fx, fy) { const c = cover(); return [c.x + fx * FRAME_W * c.s, c.y + fy * FRAME_H * c.s]; }
+function draw() {
+  let i = Math.round(clamp(want, 0, FRAMES - 1));
+  let im = imgs[i];
+  if (!im || !im.complete || !im.naturalWidth) {            // nearest frame that is already in
+    for (let d = 1; d < FRAMES; d++) {
+      const a = imgs[i - d], b = imgs[i + d];
+      if (a && a.complete && a.naturalWidth) { im = a; break; }
+      if (b && b.complete && b.naturalWidth) { im = b; break; }
+    }
+  }
+  if (!im || !im.naturalWidth) return;
+  const dpr = film.width / innerWidth, c = cover();
+  fctx.fillStyle = '#000';
+  fctx.fillRect(0, 0, film.width, film.height);
+  fctx.drawImage(im, c.x * dpr, c.y * dpr, FRAME_W * c.s * dpr, FRAME_H * c.s * dpr);
+  shownFrame = i;
+}
+
+// ===================================================================== sound (made in the browser, no files)
+let ac = null, soundOn = true;
+const sndBtn = document.getElementById('sound');
+function audio() {
+  if (!soundOn) return null;
+  if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch { return null; } }
+  if (ac.state === 'suspended') ac.resume();
+  return ac;
+}
+function noiseBuf(a, sec) {
+  const b = a.createBuffer(1, a.sampleRate * sec, a.sampleRate), d = b.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  return b;
+}
+function playCharge(big = false) {
+  const a = audio(); if (!a) return;
+  const t = a.currentTime, dur = big ? 2.2 : 1.7, out = a.createGain();
+  out.gain.setValueAtTime(0.0001, t);
+  out.gain.exponentialRampToValueAtTime(big ? 0.32 : 0.24, t + dur * 0.85);
+  out.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.35);
+  out.connect(a.destination);
+  // rising whine: two detuned oscillators through a resonant filter, with a tremolo that speeds up
+  const f = a.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 6;
+  f.frequency.setValueAtTime(500, t); f.frequency.exponentialRampToValueAtTime(big ? 5200 : 4200, t + dur);
+  const trem = a.createGain(); trem.gain.value = 0.7;
+  const lfo = a.createOscillator(), lfoG = a.createGain();
+  lfo.frequency.setValueAtTime(6, t); lfo.frequency.exponentialRampToValueAtTime(38, t + dur);
+  lfoG.gain.value = 0.3; lfo.connect(lfoG); lfoG.connect(trem.gain);
+  for (const [type, det] of [['sawtooth', 0], ['square', 7]]) {
+    const o = a.createOscillator(); o.type = type; o.detune.value = det;
+    o.frequency.setValueAtTime(110, t); o.frequency.exponentialRampToValueAtTime(big ? 1500 : 1200, t + dur);
+    o.connect(f); o.start(t); o.stop(t + dur + 0.4);
+  }
+  // high shimmer
+  const sh = a.createOscillator(), shg = a.createGain(); sh.type = 'sine';
+  sh.frequency.setValueAtTime(1800, t); sh.frequency.exponentialRampToValueAtTime(7800, t + dur);
+  shg.gain.value = 0.05; sh.connect(shg); shg.connect(out); sh.start(t); sh.stop(t + dur + 0.4);
+  f.connect(trem); trem.connect(out); lfo.start(t); lfo.stop(t + dur + 0.4);
+}
+function playHoloBlip() {
+  const a = audio(); if (!a) return;
+  const t = a.currentTime;
+  [880, 1320, 1760].forEach((fr, i) => {
+    const o = a.createOscillator(), g = a.createGain(); o.type = 'sine'; o.frequency.value = fr;
+    g.gain.setValueAtTime(0.0001, t + i * 0.06); g.gain.exponentialRampToValueAtTime(0.08, t + i * 0.06 + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.06 + 0.25);
+    o.connect(g); g.connect(a.destination); o.start(t + i * 0.06); o.stop(t + i * 0.06 + 0.3);
+  });
+}
+function playShot() {
+  const a = audio(); if (!a) return;
+  const t = a.currentTime;
+  // the blast: falling zap + low thump + noise burst
+  const z = a.createOscillator(), zg = a.createGain(); z.type = 'sawtooth';
+  z.frequency.setValueAtTime(2400, t); z.frequency.exponentialRampToValueAtTime(90, t + 0.45);
+  zg.gain.setValueAtTime(0.35, t); zg.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+  const zf = a.createBiquadFilter(); zf.type = 'lowpass'; zf.frequency.value = 3000;
+  z.connect(zf); zf.connect(zg); zg.connect(a.destination); z.start(t); z.stop(t + 0.55);
+  const th = a.createOscillator(), tg = a.createGain(); th.type = 'sine';
+  th.frequency.setValueAtTime(120, t); th.frequency.exponentialRampToValueAtTime(38, t + 0.6);
+  tg.gain.setValueAtTime(0.7, t); tg.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+  th.connect(tg); tg.connect(a.destination); th.start(t); th.stop(t + 0.75);
+  const n = a.createBufferSource(), ng = a.createGain(), nf = a.createBiquadFilter();
+  n.buffer = noiseBuf(a, 0.6); nf.type = 'bandpass'; nf.frequency.value = 1400; nf.Q.value = 0.7;
+  ng.gain.setValueAtTime(0.5, t); ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+  n.connect(nf); nf.connect(ng); ng.connect(a.destination); n.start(t);
+  // glass: a crack, then tinkles
+  const c = a.createBufferSource(), cg = a.createGain(), cf = a.createBiquadFilter();
+  c.buffer = noiseBuf(a, 0.25); cf.type = 'highpass'; cf.frequency.value = 3500;
+  cg.gain.setValueAtTime(0.6, t + 0.04); cg.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+  c.connect(cf); cf.connect(cg); cg.connect(a.destination); c.start(t + 0.04);
+  for (let i = 0; i < 16; i++) {
+    const at = t + 0.12 + Math.random() * 0.9, o = a.createOscillator(), g = a.createGain();
+    o.type = 'sine'; o.frequency.value = 2500 + Math.random() * 5000;
+    g.gain.setValueAtTime(0.0001, at); g.gain.exponentialRampToValueAtTime(0.05 + Math.random() * 0.05, at + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + 0.12 + Math.random() * 0.2);
+    o.connect(g); g.connect(a.destination); o.start(at); o.stop(at + 0.4);
+  }
+}
+let rumble = null;
+function setRumble(level) {                         // boot thrusters while he flies down
+  const a = ac && soundOn ? ac : null;
+  if (!a) return;
+  if (!rumble) {
+    const n = a.createBufferSource(); n.buffer = noiseBuf(a, 2); n.loop = true;
+    const f = a.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 520;
+    const g = a.createGain(); g.gain.value = 0;
+    n.connect(f); f.connect(g); g.connect(a.destination); n.start();
+    rumble = { g, f };
+  }
+  rumble.g.gain.setTargetAtTime(level * 0.22, a.currentTime, 0.08);
+  rumble.f.frequency.setTargetAtTime(300 + level * 600, a.currentTime, 0.1);
+}
+sndBtn.addEventListener('click', () => {
+  soundOn = !soundOn;
+  document.getElementById('snd-on').style.display = soundOn ? '' : 'none';
+  document.getElementById('snd-off').style.display = soundOn ? 'none' : '';
+  if (!soundOn && rumble) rumble.g.gain.value = 0;
+  if (soundOn) audio();
+});
+document.getElementById('enter').addEventListener('click', () => {
+  audio();
+  scrollTo({ top: innerHeight * 0.7, behavior: 'smooth' });
+});
+
+// ===================================================================== the apps (design only)
+const holo = document.getElementById('holo');
+const pcHTML = `
+  <div class="pc device holo-fx" id="dev-pc" role="group" aria-label="Jarvis for PC">
+    <div class="glow"></div>
+    <div class="chrome"><b></b>Jarvis<span class="win">&#8211; &#9634; &#10005;</span></div>
+    <div class="body">
+      <nav class="side">
+        <div class="logo"><i></i>Jarvis</div>
+        ${PC_MODES.map((m) => `<button class="mode" data-k="${m.k}">${svg(m.icon)}<span>${m.name}</span><span class="k">${m.key}</span></button>`).join('')}
+        <div class="recents">RECENTS</div>
+        <div class="rec">Plan my week</div><div class="rec">Wooden barrel in 3D</div><div class="rec">Fix the login bug</div>
+      </nav>
+      <div class="main">
+        <div class="head"><div class="ic" id="pc-ic"></div><div><h3 id="pc-t"></h3><p id="pc-s"></p></div></div>
+        <div class="empty"><div><h2 id="pc-h"></h2><p id="pc-p"></p>
+          <div class="chips"><span>Plan my week</span><span>Explain this error</span><span>Show me a sports car</span></div></div></div>
+        <div class="input">Message Jarvis&hellip;<span class="send"></span></div>
+      </div>
+    </div>
+  </div>`;
+const phoneHTML = (id, items, ios) => `
+  <div class="phone device holo-fx ${ios ? 'ios' : ''}" id="${id}" role="group" aria-label="Jarvis for ${ios ? 'iPhone' : 'Android'}">
+    <div class="glow"></div><div class="notch"></div>
+    <div class="status"><span>9:41</span><span>${ios ? '&#9679;&#9679;&#9679; &#9646;' : '&#9662; &#9646;'}</span></div>
+    ${ios ? '<span class="soon">Coming soon</span>' : ''}
+    <div class="top">${ios ? '' : '<div class="orb"></div>'}<div><h3>Jarvis</h3><p>${ios ? 'Your PC, in your pocket' : 'Connected to your PC'}</p></div></div>
+    <div class="list">${items.map((m) => `<button class="p-item" data-k="${m.k}">${svg(m.icon)}<span>${m.name}</span></button>`).join('')}</div>
+    <div class="composer">Ask Jarvis anything&hellip;</div>
+    <div class="bar"></div>
+  </div>`;
+holo.innerHTML = pcHTML + phoneHTML('dev-android', PHONE_ITEMS, false) + phoneHTML('dev-ios', IOS_ITEMS, true) + '<div class="beamcone" id="cone"></div>';
+const DEV = { pc: document.getElementById('dev-pc'), android: document.getElementById('dev-android'), ios: document.getElementById('dev-ios') };
+const info = document.getElementById('info');
+function showInfo(item, deviceName) {
+  info.querySelector('.t span').textContent = item.name + (deviceName ? ' · ' + deviceName : '');
+  info.querySelector('.for').textContent = item.for;
+  info.querySelector('.good').textContent = item.good;
+  info.classList.add('on');
+}
+function pickPC(k) {
+  const m = PC_MODES.find((x) => x.k === k);
+  DEV.pc.querySelectorAll('.mode').forEach((b) => b.classList.toggle('on', b.dataset.k === k));
+  document.getElementById('pc-ic').innerHTML = svg(m.icon);
+  document.getElementById('pc-t').textContent = m.name === 'All in one' ? 'All in one' : m.name;
+  document.getElementById('pc-s').textContent = m.sub;
+  document.getElementById('pc-h').textContent = m.title;
+  document.getElementById('pc-p').textContent = m.sub;
+  showInfo(m, 'PC');
+}
+DEV.pc.addEventListener('click', (e) => { const b = e.target.closest('.mode'); if (b) pickPC(b.dataset.k); });
+for (const [id, items, label] of [['android', PHONE_ITEMS, 'Android'], ['ios', IOS_ITEMS, 'iPhone']]) {
+  DEV[id].addEventListener('click', (e) => {
+    const b = e.target.closest('.p-item'); if (!b) return;
+    DEV[id].querySelectorAll('.p-item').forEach((x) => x.classList.toggle('on', x === b));
+    showInfo(items.find((x) => x.k === b.dataset.k), label);
+  });
+}
+pickPC('all');
+info.classList.remove('on');
+// keys 1-9 pick a PC mode while the PC app is open (like the real app's Ctrl+number)
+addEventListener('keydown', (e) => {
+  if (current !== 'pc' || e.altKey || e.metaKey) return;
+  const n = +e.key; if (n >= 1 && n <= 9) { pickPC(PC_MODES[n - 1].k); e.preventDefault(); }
+});
+
+// place one device: t = 0 tiny at the palm (hologram), 1 = centred, readable
+function place(el, t, holoAmt, fade = 1) {
+  const w = el.offsetWidth, h = el.offsetHeight;
+  const maxW = innerWidth * (el === DEV.pc ? 0.9 : 0.86), maxH = innerHeight * (el === DEV.pc ? 0.74 : 0.8);
+  const full = Math.min(maxW / w, maxH / h, el === DEV.pc ? 1.05 : 1);
+  const [px, py] = toScreen(...PALM_AT_HOLO);
+  const tiny = full * 0.16;
+  const cx = lerp(px + 60, innerWidth / 2, t), cy = lerp(py - 70, innerHeight * (el === DEV.pc ? 0.53 : 0.54), t);
+  const s = lerp(tiny, full, t);
+  const ry = lerp(-24, 0, t), rx = lerp(8, 0, t);
+  el.style.transform = `translate(${cx - w / 2}px, ${cy - h / 2}px) rotateY(${ry}deg) rotateX(${rx}deg) scale(${s})`;
+  el.style.opacity = fade;
+  el.style.setProperty('--holo', holoAmt);
+  el.style.setProperty('--scan', holoAmt * 0.9);
+  el.style.filter = holoAmt > 0.02 ? `drop-shadow(0 0 ${18 * holoAmt}px rgba(54,200,255,${0.6 * holoAmt})) hue-rotate(${-8 * holoAmt}deg) brightness(${1 + 0.25 * holoAmt})` : 'none';
+  el.classList.toggle('live', t > 0.98 && fade > 0.98);
+}
+function hide(el) { el.style.opacity = 0; el.classList.remove('live'); }
+
+// ===================================================================== cracks (canvas), drawn once per shot
+const cracks = document.getElementById('cracks');
+const cctx = cracks.getContext('2d');
+let shot = false, shotAt = 0, crackLines = null;
+function makeCracks() {
+  const [hx, hy] = toScreen(...BEAM_HIT);
+  const ox = clamp(hx, 24, innerWidth - 24), oy = clamp(hy, 24, innerHeight - 24);
+  const lines = [];
+  const reach = Math.hypot(innerWidth, innerHeight);
+  const n = 22;
+  for (let i = 0; i < n; i++) {
+    let ang = (i / n) * Math.PI * 2 + Math.random() * 0.25, x = ox, y = oy;
+    const len = reach * (0.25 + Math.random() * 0.75), seg = [[x, y]];
+    let d = 0;
+    while (d < len) {
+      const step = 18 + Math.random() * 46;
+      ang += (Math.random() - 0.5) * 0.5;
+      x += Math.cos(ang) * step; y += Math.sin(ang) * step; d += step;
+      seg.push([x, y]);
+      if (Math.random() < 0.12) lines.push({ pts: branch(x, y, ang + (Math.random() < .5 ? 1 : -1) * (0.5 + Math.random() * 0.6), len * 0.3), w: 1 });
+    }
+    lines.push({ pts: seg, w: 1.6 });
+  }
+  // rings around the hit
+  for (const r of [26, 58, 104]) {
+    const pts = [];
+    for (let a = 0; a <= Math.PI * 2 + 0.01; a += 0.35) pts.push([ox + Math.cos(a) * r * (0.85 + Math.random() * 0.3), oy + Math.sin(a) * r * (0.85 + Math.random() * 0.3)]);
+    lines.push({ pts, w: 1.1 });
+  }
+  return { ox, oy, lines };
+}
+function branch(x, y, ang, len) {
+  const pts = [[x, y]]; let d = 0;
+  while (d < len) { const s = 14 + Math.random() * 30; ang += (Math.random() - .5) * .6; x += Math.cos(ang) * s; y += Math.sin(ang) * s; d += s; pts.push([x, y]); }
+  return pts;
+}
+function drawCracks(prog) {
+  const dpr = cracks.width / innerWidth;
+  cctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cctx.clearRect(0, 0, innerWidth, innerHeight);
+  if (!crackLines) return;
+  const { ox, oy, lines } = crackLines;
+  // the broken corner: a dark hole of shattered glass
+  const hole = 70 + 80 * clamp(prog * 3);
+  const g = cctx.createRadialGradient(ox, oy, 0, ox, oy, hole);
+  g.addColorStop(0, 'rgba(8,10,14,.95)'); g.addColorStop(0.55, 'rgba(20,26,34,.75)'); g.addColorStop(1, 'rgba(20,26,34,0)');
+  cctx.fillStyle = g; cctx.beginPath(); cctx.arc(ox, oy, hole, 0, Math.PI * 2); cctx.fill();
+  cctx.lineCap = 'round'; cctx.lineJoin = 'round';
+  for (const pass of [0, 1]) {
+    for (const l of lines) {
+      const n = Math.max(2, Math.floor(l.pts.length * clamp(prog * 1.6)));
+      cctx.beginPath();
+      cctx.moveTo(l.pts[0][0] + pass * 0.8, l.pts[0][1] + pass * 0.8);
+      for (let i = 1; i < n; i++) cctx.lineTo(l.pts[i][0] + pass * 0.8, l.pts[i][1] + pass * 0.8);
+      cctx.strokeStyle = pass ? 'rgba(255,255,255,.85)' : 'rgba(30,36,46,.75)';
+      cctx.lineWidth = pass ? l.w * 0.6 : l.w;
+      cctx.stroke();
+    }
+  }
+}
+
+// ===================================================================== main loop
+const intro = document.getElementById('intro'), sect = document.getElementById('sect'), downloads = document.getElementById('downloads');
+const SECT_TEXT = {
+  pc: ['Jarvis for PC', 'Everything, on your own computer', 'Click a mode to see what it does.'],
+  android: ['Jarvis for Android', 'Your PC, in your pocket', 'Tap a section to see what it does.'],
+  ios: ['Jarvis for iPhone', 'Coming soon', 'Tap a section to see what it will do.'],
+};
+let current = '', charged = false, blipped = false, bigCharged = false, loopT0 = performance.now();
+function setSect(id) {
+  const t = SECT_TEXT[id];
+  if (t) { sect.querySelector('small').textContent = t[0]; sect.querySelector('h2').textContent = t[1]; sect.querySelector('p').textContent = t[2]; }
+  sect.style.opacity = t ? 1 : 0;
+}
+function frame() {
+  const { s, p } = where();
+  const id = s.id;
+  if (id !== current) {
+    if (['pc', 'android', 'ios'].includes(current) && !['pc', 'android', 'ios'].includes(id)) info.classList.remove('on');
+    if (['pc', 'android', 'ios'].includes(id) && id !== current) info.classList.remove('on');
+    current = id;
+    setSect(id);
+  }
+  intro.classList.toggle('gone', !(id === 'start' && p < 0.6));
+
+  // which picture of the film
+  const appTime = ['open', 'pc', 'android', 'ios', 'close'].includes(id);
+  if (s.frames) {
+    const [a, b] = s.frames;
+    want = lerp(a, b, id === 'fly' ? smooth(p) * 0.7 + p * 0.3 : p);
+  } else if (id === 'start') {
+    want = 0;
+  } else if (appTime) {                       // the hover loop plays by time behind the apps
+    const sec = (performance.now() - loopT0) / 1000;
+    want = MARK.holo + ((sec * 30) % (MARK.loopEnd - MARK.holo));
+  } else if (id === 'get') {
+    want = MARK.end;
+  }
+  if (Math.round(want) !== shownFrame) draw();
+  film.classList.toggle('dim', ['pc', 'android', 'ios'].includes(id));
+
+  // sounds tied to the film
+  setRumble(id === 'fly' && want < 104 ? 1 - want / 140 : 0);
+  if (id === 'charge' && want > 190 && !charged) { charged = true; playCharge(false); }
+  if ((id === 'start' || id === 'fly') && charged) charged = false;
+  if (id === 'open' && !blipped) { blipped = true; playHoloBlip(); }
+  if (['start', 'fly', 'charge'].includes(id)) blipped = false;
+  if (id === 'aim' && want > MARK.aimed + 4 && !bigCharged) { bigCharged = true; playCharge(true); }
+  if (['pc', 'android', 'ios', 'close'].includes(id)) bigCharged = false;
+
+  // the hologram
+  const cone = document.getElementById('cone');
+  hide(DEV.pc); hide(DEV.android); hide(DEV.ios); cone.style.opacity = 0;
+  if (id === 'charge' && p > 0.85) {            // it flickers on in the palm
+    const t = (p - 0.85) / 0.15;
+    place(DEV.pc, 0, 1, t * (0.6 + 0.4 * Math.random()));
+  } else if (id === 'open') {
+    const t = smooth(p);
+    place(DEV.pc, t, 1 - t * 0.85);
+    beamCone(cone, DEV.pc, 1 - t);
+  } else if (id === 'pc') {
+    const out = clamp((p - 0.88) / 0.12);
+    place(DEV.pc, 1, 0.15 * (1 - smooth(clamp(p * 4))), 1 - out);
+    if (out > 0) place(DEV.android, 1, 0, out);
+  } else if (id === 'android') {
+    const out = clamp((p - 0.88) / 0.12);
+    place(DEV.android, 1, 0, 1 - out);
+    if (out > 0) place(DEV.ios, 1, 0, out);
+  } else if (id === 'ios') {
+    place(DEV.ios, 1, 0, 1);
+  } else if (id === 'close') {
+    const t = 1 - smooth(p);
+    place(DEV.ios, t, 1 - t * 0.85, clamp(t * 1.4));
+    beamCone(cone, DEV.ios, t);
+  }
+
+  // the shot
+  const firing = id === 'fire' || id === 'get';
+  if (firing && want >= MARK.fire && !shot) {
+    shot = true; shotAt = performance.now(); crackLines = makeCracks();
+    playShot();
+    const st = document.getElementById('shake'); st.classList.remove('shake'); void st.offsetWidth; st.classList.add('shake');
+    const fl = document.getElementById('flash'); const [hx, hy] = toScreen(...BEAM_HIT);
+    fl.style.setProperty('--fx', (100 * hx / innerWidth) + '%'); fl.style.setProperty('--fy', (100 * hy / innerHeight) + '%');
+    fl.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 600, easing: 'ease-out' });
+  }
+  if (!firing || want < MARK.fire - 2) { if (shot) { shot = false; crackLines = null; drawCracks(0); } }
+  if (shot) drawCracks(clamp((performance.now() - shotAt) / 700));
+  downloads.classList.toggle('on', id === 'get' || (id === 'fire' && p > 0.55));
+
+  requestAnimationFrame(frame);
+}
+// a faint light cone from the palm to the hologram while it opens / closes
+function beamCone(cone, el, amt) {
+  const [px, py] = toScreen(...PALM_AT_HOLO);
+  const r = el.getBoundingClientRect(), tx = r.left + r.width / 2, ty = r.top + r.height / 2;
+  const len = Math.hypot(tx - px, ty - py), ang = Math.atan2(ty - py, tx - px);
+  cone.style.left = px + 'px'; cone.style.top = py + 'px'; cone.style.width = len + 'px';
+  cone.style.height = Math.max(2, r.height * 0.6) + 'px';
+  cone.style.marginTop = -Math.max(1, r.height * 0.3) + 'px';
+  cone.style.clipPath = 'polygon(0 49%, 100% 0, 100% 100%, 0 51%)';
+  cone.style.transform = `rotate(${ang}rad)`;
+  cone.style.opacity = 0.35 * amt;
+}
+
+addEventListener('resize', () => { fit(); if (shot) crackLines = makeCracks(); draw(); });
+fit();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
