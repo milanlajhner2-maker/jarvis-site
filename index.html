@@ -661,83 +661,139 @@ function place(el, t, holoAmt, fade = 1) {
 }
 function hide(el) { el.style.opacity = 0; el.classList.remove('live'); }
 
-// ===================================================================== the shot: only the spot he hits breaks
-// The beam punches one hole in the screen glass. Cracks run out a little way from its rim, broken glass hangs at the
-// edge, and the downloads sit inside the hole. Nothing else on the screen breaks.
+// ===================================================================== the shot: the screen glass breaks in the top-left corner
+// The beam leaves the film at its left edge (measured in the frames: 10.5% down, climbing 0.05 px per px to the left).
+// That point on the screen edge is the impact. The glass cracks like real tempered glass (rays out from the impact,
+// broken rings across them). Every piece inside the corner box falls out under gravity, carrying the picture that was
+// on it, spins and fades. The dark box left behind holds the downloads. The rest of the glass stays cracked.
+const BEAM_EDGE = { y0: 0.105, slope: 0.05 };
 const cracks = document.getElementById('cracks');
 const cctx = cracks.getContext('2d');
 let shot = false, shotAt = 0, hole = null;
-function makeHole() {
-  const W = innerWidth, H = innerHeight;
-  const R = clamp(Math.min(W, H) * 0.3, 175, 280);
-  const [hx, hy] = toScreen(...BEAM_HIT);
-  const cx = clamp(hx + R * 0.55, R + 12, W - R - 12), cy = clamp(hy + R * 0.5, R + 12, H - R - 12);
-  let ix = hx, iy = hy;                               // the impact, kept inside the hole
-  const dd = Math.hypot(ix - cx, iy - cy), lim = R * 0.6;
-  if (dd > lim) { ix = cx + (ix - cx) * lim / dd; iy = cy + (iy - cy) * lim / dd; }
-  const N = 26, rim = [];
-  for (let i = 0; i < N; i++) {
-    const a = (i / N) * Math.PI * 2 + (Math.random() - 0.5) * 0.18, r = R * (0.9 + Math.random() * 0.22);
-    rim.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r, a]);
-  }
-  const lines = [];
-  for (const [x, y, a] of rim) if (Math.random() < 0.75) lines.push({ pts: branch(x, y, a + (Math.random() - 0.5) * 0.5, R * (0.15 + Math.random() * 0.55)), w: 1.3 });
-  for (const k of [1.22, 1.45]) {                     // broken arcs of stress around the hole
-    const pts = [], a0 = Math.random() * 6.28, span = 1.2 + Math.random() * 1.6;
-    for (let a = a0; a <= a0 + span; a += 0.18) pts.push([cx + Math.cos(a) * R * k * (0.95 + Math.random() * 0.1), cy + Math.sin(a) * R * k * (0.95 + Math.random() * 0.1)]);
-    lines.push({ pts, w: 1 });
-  }
-  const shards = [];                                   // glass still hanging at the rim
-  for (let i = 0; i < N; i++) if (Math.random() < 0.45) {
-    const p = rim[i], q = rim[(i + 1) % N], k = 0.8 + Math.random() * 0.1;
-    shards.push([p, q, [cx + ((p[0] + q[0]) / 2 - cx) * k, cy + ((p[1] + q[1]) / 2 - cy) * k]]);
-  }
-  return { cx, cy, ix, iy, R, rim, lines, shards };
+function beamImpact() {
+  const c = cover();
+  const fx = Math.max(0, -c.x / c.s);                    // first film column that is on screen
+  const fy = BEAM_EDGE.y0 * FRAME_H + BEAM_EDGE.slope * fx;
+  return [Math.max(0, c.x + fx * c.s), c.y + fy * c.s];
 }
-function branch(x, y, ang, len) {
-  const pts = [[x, y]]; let d = 0;
-  while (d < len) { const s = 14 + Math.random() * 30; ang += (Math.random() - .5) * .6; x += Math.cos(ang) * s; y += Math.sin(ang) * s; d += s; pts.push([x, y]); }
-  return pts;
+const rnd = (a, b) => a + Math.random() * (b - a);
+function makeHole() {
+  const W = innerWidth, H = innerHeight, phone = W < 720;
+  const [ix, iy] = beamImpact();
+  const bw = phone ? W * 0.9 : clamp(W * 0.34, 330, 470);
+  const bh = Math.max(phone ? clamp(H * 0.42, 300, 380) : clamp(H * 0.5, 320, 430), iy + 80);
+  const crackR = Math.max(bw, bh) * 1.45;
+  // the fracture mesh: rays fanning out over the screen side of the impact, rings across them
+  const RAYS = 26, ang = [], rad = [];
+  for (let i = 0; i <= RAYS; i++) ang.push(-Math.PI / 2 - 0.08 + (Math.PI + 0.16) * (i / RAYS) + (i && i < RAYS ? rnd(-0.05, 0.05) : 0));
+  for (let r = 18; r < crackR * 1.1; r *= rnd(1.22, 1.34)) rad.push(r);
+  const V = ang.map((a, i) => rad.map((r) => {
+    const aa = a + (i && i < RAYS ? rnd(-0.035, 0.035) : 0), rr = r * rnd(0.93, 1.07);
+    return [ix + Math.cos(aa) * rr, iy + Math.sin(aa) * rr];
+  }));
+  // ring segments bend a little in the middle, like real cracks
+  const mid = (p, q) => { const t = rnd(0.4, 0.6), n = rnd(-0.12, 0.12), dx = q[0] - p[0], dy = q[1] - p[1];
+    return [p[0] + dx * t - dy * n, p[1] + dy * t + dx * n]; };
+  const M = ang.slice(0, -1).map((_, i) => rad.map((_, k) => mid(V[i][k], V[i + 1][k])));
+  const inBox = (x, y) => x < bw && y < bh;
+  const shards = [];
+  for (let i = 0; i < RAYS; i++) for (let k = -1; k < rad.length - 1; k++) {
+    const pts = k < 0 ? [[ix, iy], V[i][0], M[i][0], V[i + 1][0]]
+                      : [V[i][k], M[i][k], V[i + 1][k], V[i + 1][k + 1], M[i][k + 1], V[i][k + 1]];
+    const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length, cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+    const r = Math.hypot(cx - ix, cy - iy);
+    const falls = inBox(cx, cy);
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    for (const [x, y] of pts) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+    shards.push({ pts, cx, cy, r, i, k, falls, bb: [x0, y0, x1 - x0, y1 - y0],
+      delay: 0.1 + (r / Math.max(bw, bh)) * 0.35 + rnd(0, 0.12),          // the pieces nearest the impact go first
+      vx: rnd(-40, 120), vy: rnd(-90, 20), w: rnd(-5, 5), life: rnd(0.8, 1.2),
+      ring: falls || Math.random() < 0.7 });                                // outside the box some rings stay unbroken
+  }
+  // neighbours (shards are stored ray by ray, rad.length cells per ray, the first one the triangle at the impact)
+  const at = (i, k) => (i < 0 || i >= RAYS || k < -1 || k > rad.length - 2) ? null : shards[i * rad.length + k + 1];
+  for (const s of shards) { s.outer = at(s.i, s.k + 1); s.next = at(s.i + 1, s.k); }
+  return { ix, iy, bw, bh, crackR, shards, snap: null };
+}
+function snapshotFilm() {                                // the picture on the glass at the moment it breaks
+  const s = document.createElement('canvas'); s.width = film.width; s.height = film.height;
+  s.getContext('2d').drawImage(film, 0, 0); return s;
 }
 function placeDownloads() {
   if (!hole) return;
   const w = downloads.offsetWidth, h = downloads.offsetHeight;
-  const k = Math.min(1.2, (0.86 * hole.R) / Math.hypot(w / 2, h / 2));
-  downloads.style.transform = `translate(${hole.cx - w / 2}px, ${hole.cy - h / 2}px) scale(${k})`;
+  const k = Math.min(1.1, (hole.bw * 0.74) / w, (hole.bh * 0.74) / h);
+  downloads.style.transform = `translate(${hole.bw * 0.45 - w / 2}px, ${hole.bh * 0.47 - h / 2}px) scale(${k})`;
 }
-function drawCracks(prog) {
+function path(pts, dx = 0, dy = 0) {
+  cctx.beginPath(); cctx.moveTo(pts[0][0] + dx, pts[0][1] + dy);
+  for (let j = 1; j < pts.length; j++) cctx.lineTo(pts[j][0] + dx, pts[j][1] + dy);
+  cctx.closePath();
+}
+function drawCracks(el) {                                // el = seconds since the shot
   const dpr = cracks.width / innerWidth;
   cctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   cctx.clearRect(0, 0, innerWidth, innerHeight);
   if (!hole) return;
-  const { cx, cy, ix, iy, R, rim, lines, shards } = hole;
-  const cp = clamp(prog * 2.2);                        // cracks race out first
+  const { ix, iy, crackR, shards } = hole;
+  const reach = crackR * (1 - Math.pow(1 - clamp(el / 0.16), 3));   // cracks race out in ~0.16 s
+  // 1. the hole: every piece that has started to fall leaves dark behind it
+  cctx.fillStyle = '#04070b'; cctx.strokeStyle = '#04070b'; cctx.lineWidth = 1.2;
+  for (const s of shards) if (s.falls && el > s.delay) { path(s.pts); cctx.fill(); cctx.stroke(); }
+  // 2. cracks in the glass that stays: a dark line with a bright edge, fading with distance
   cctx.lineCap = 'round'; cctx.lineJoin = 'round';
-  for (const pass of [0, 1]) for (const l of lines) {
-    const n = Math.max(2, Math.floor(l.pts.length * cp));
-    cctx.beginPath();
-    cctx.moveTo(l.pts[0][0] + pass * 0.8, l.pts[0][1] + pass * 0.8);
-    for (let i = 1; i < n; i++) cctx.lineTo(l.pts[i][0] + pass * 0.8, l.pts[i][1] + pass * 0.8);
-    cctx.strokeStyle = pass ? 'rgba(255,255,255,.85)' : 'rgba(30,36,46,.75)';
-    cctx.lineWidth = pass ? l.w * 0.6 : l.w;
-    cctx.stroke();
+  for (const s of shards) {
+    if (s.falls && el > s.delay) continue;
+    if (s.r > reach) continue;
+    const a = Math.pow(clamp(1 - s.r / crackR), 0.55);
+    const pts = s.pts, n = pts.length;
+    // radial edge on the left side of the cell, ring edge on its outer side
+    const radial = s.k < 0 ? [pts[0], pts[1]] : [pts[0], pts[n - 1]];
+    const ring = s.k < 0 ? [pts[1], pts[2], pts[3]] : [pts[n - 1], pts[n - 2], pts[n - 3]];
+    for (const [line, on] of [[radial, true], [ring, s.ring]]) {
+      if (!line || !on) continue;
+      for (const pass of [0, 1]) {
+        cctx.beginPath(); cctx.moveTo(line[0][0] + pass * 0.7, line[0][1] + pass * 0.7);
+        for (let j = 1; j < line.length; j++) cctx.lineTo(line[j][0] + pass * 0.7, line[j][1] + pass * 0.7);
+        cctx.strokeStyle = pass ? `rgba(240,248,255,${0.95 * a})` : `rgba(6,9,14,${0.8 * a})`;
+        cctx.lineWidth = pass ? 0.9 : 1.8; cctx.stroke();
+      }
+    }
   }
-  const open = smooth(clamp(prog * 1.6));             // then the glass falls out, from the impact outwards
-  if (open <= 0) return;
-  const P = (pt) => [ix + (pt[0] - ix) * open, iy + (pt[1] - iy) * open];
-  cctx.beginPath();
-  rim.forEach((pt, i) => { const [x, y] = P(pt); i ? cctx.lineTo(x, y) : cctx.moveTo(x, y); });
-  cctx.closePath();
-  const g = cctx.createRadialGradient(cx, cy, 0, cx, cy, R * 1.1);
-  g.addColorStop(0, 'rgba(10,22,34,.97)'); g.addColorStop(0.7, 'rgba(5,10,16,.97)'); g.addColorStop(1, 'rgba(2,4,7,.98)');
-  cctx.fillStyle = g; cctx.fill();
-  cctx.save(); cctx.shadowColor = 'rgba(54,200,255,.8)'; cctx.shadowBlur = 18;
-  cctx.strokeStyle = 'rgba(170,230,255,.9)'; cctx.lineWidth = 1.6; cctx.stroke(); cctx.restore();
-  for (const [p, q, m] of shards) {
-    const a = P(p), b = P(q), c = P(m);
-    cctx.beginPath(); cctx.moveTo(...a); cctx.lineTo(...b); cctx.lineTo(...c); cctx.closePath();
-    cctx.fillStyle = 'rgba(190,225,255,.10)'; cctx.fill();
-    cctx.strokeStyle = 'rgba(235,248,255,.55)'; cctx.lineWidth = 0.8; cctx.stroke();
+  // 3. a cold glow on the broken rim of the hole
+  cctx.save(); cctx.shadowColor = 'rgba(80,200,255,.9)'; cctx.shadowBlur = 12;
+  cctx.strokeStyle = 'rgba(190,235,255,.85)'; cctx.lineWidth = 1.1;
+  for (const s of shards) {
+    if (!s.falls || el <= s.delay) continue;
+    const p = s.pts, n = p.length;
+    for (const [t, seg] of [[s.outer, s.k < 0 ? [p[1], p[2], p[3]] : [p[n - 3], p[n - 2], p[n - 1]]],
+                            [s.next, s.k < 0 ? [p[3], p[0]] : [p[2], p[3]]]]) {   // shared edge with a piece that stays
+      if (!t || t.falls) continue;
+      cctx.beginPath(); cctx.moveTo(...seg[0]); for (let j = 1; j < seg.length; j++) cctx.lineTo(...seg[j]); cctx.stroke();
+    }
+  }
+  cctx.restore();
+  // 4. the falling pieces: the picture that was on them, a glass sheen, a bright broken edge
+  for (const s of shards) {
+    if (!s.falls || el <= s.delay) continue;
+    const t = el - s.delay, fade = 1 - t / s.life;
+    if (fade <= 0) continue;
+    const dx = s.vx * t, dy = s.vy * t + 0.5 * 2400 * t * t, rot = s.w * t;
+    cctx.save();
+    cctx.globalAlpha = fade;
+    cctx.translate(s.cx + dx, s.cy + dy); cctx.rotate(rot); cctx.translate(-s.cx, -s.cy);
+    path(s.pts); cctx.save(); cctx.clip();
+    const [bx, by, bw, bh] = s.bb;
+    // copy only the part of the picture under this piece, kept inside the canvas (Safari draws nothing otherwise)
+    const sx = clamp(bx, 0, innerWidth), sy = clamp(by, 0, innerHeight);
+    const sw = clamp(bx + bw, 0, innerWidth) - sx, sh = clamp(by + bh, 0, innerHeight) - sy;
+    if (hole.snap && sw > 1 && sh > 1) cctx.drawImage(hole.snap, sx * dpr, sy * dpr, sw * dpr, sh * dpr, sx, sy, sw, sh);
+    const g = cctx.createLinearGradient(bx, by, bx + bw, by + bh);
+    g.addColorStop(0, 'rgba(210,235,255,.22)'); g.addColorStop(0.5, 'rgba(210,235,255,.04)'); g.addColorStop(1, 'rgba(210,235,255,.16)');
+    cctx.fillStyle = g; cctx.fillRect(bx, by, bw, bh);
+    cctx.restore();
+    cctx.strokeStyle = 'rgba(240,250,255,.8)'; cctx.lineWidth = 0.9; cctx.stroke();
+    cctx.restore();
   }
 }
 
@@ -822,7 +878,7 @@ function frame(now) {
   // the shot
   const firing = id === 'fire' || id === 'get';
   if (firing && want >= MARK.fire && !shot) {
-    shot = true; shotAt = performance.now(); hole = makeHole(); placeDownloads();
+    shot = true; shotAt = performance.now(); hole = makeHole(); hole.snap = snapshotFilm(); placeDownloads();
     playShot();
     const st = document.getElementById('shake'); st.classList.remove('shake'); void st.offsetWidth; st.classList.add('shake');
     const fl = document.getElementById('flash');
@@ -830,9 +886,9 @@ function frame(now) {
     fl.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 600, easing: 'ease-out' });
   }
   if (!firing || want < MARK.fire - 2) { if (shot) { shot = false; hole = null; drawCracks(0); } }
-  const since = (performance.now() - shotAt) / 700;
-  if (shot) drawCracks(clamp(since));
-  const showDl = shot && since > 0.6 && (id === 'get' || (id === 'fire' && p > 0.55));
+  const el = (performance.now() - shotAt) / 1000;
+  if (shot) drawCracks(el);
+  const showDl = shot && el > 0.9 && (id === 'get' || (id === 'fire' && p > 0.55));
   downloads.classList.toggle('on', showDl);
   credit.classList.toggle('on', showDl);
 
@@ -851,7 +907,7 @@ function beamCone(cone, el, amt) {
   cone.style.opacity = 0.35 * amt;
 }
 
-addEventListener('resize', () => { fit(); if (shot) { hole = makeHole(); placeDownloads(); } draw(); });
+addEventListener('resize', () => { fit(); if (shot) { hole = makeHole(); shotAt = performance.now() - 5000; placeDownloads(); } draw(); });
 // download buttons: a real file, or an honest "Coming soon"
 for (const [k, url] of Object.entries(DOWNLOADS)) {
   const a = document.getElementById('dl-' + k);
