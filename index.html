@@ -154,27 +154,28 @@
            opacity: 0; pointer-events: none; }
 
   /* ---------- downloads ---------- */
-  #downloads { position: absolute; left: 50%; bottom: 9vh; transform: translate(-50%, 30px); width: min(980px, calc(100vw - 32px));
-               opacity: 0; pointer-events: none; transition: opacity .5s, transform .5s; text-align: center; }
-  #downloads.on { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
-  #downloads h2 { font-size: clamp(26px, 4vw, 44px); letter-spacing: -0.035em; font-weight: 800; }
-  #downloads > p { color: var(--ink-2); margin-top: 6px; }
-  .dls { margin-top: 22px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-  .dl { display: flex; align-items: center; gap: 14px; padding: 16px 18px; border-radius: 16px; background: #fff; color: #05070a; text-align: left;
-        text-decoration: none; box-shadow: 0 0 40px rgba(54,200,255,.22); transition: transform .15s; }
-  .dl:hover { transform: translateY(-2px); }
-  .dl svg { width: 30px; height: 30px; flex: none; fill: currentColor; }
-  .dl small { display: block; font-size: 11.5px; color: #5a6272; }
-  .dl b { font-size: 16px; font-weight: 600; }
+  /* the panel sits inside the hole the shot breaks (placed and scaled by placeDownloads()) */
+  #downloads { position: absolute; left: 0; top: 0; width: 270px; text-align: center; transform-origin: 50% 50%;
+               opacity: 0; pointer-events: none; transition: opacity .45s; }
+  #downloads.on { opacity: 1; pointer-events: auto; }
+  #downloads h2 { font-size: 26px; letter-spacing: -0.03em; font-weight: 800; }
+  #downloads > p { color: var(--ink-2); margin-top: 2px; font-size: 13px; }
+  .dls { margin-top: 12px; display: grid; grid-template-columns: 1fr; gap: 8px; }
+  .dl { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 12px; background: #fff; color: #05070a; text-align: left;
+        text-decoration: none; box-shadow: 0 0 30px rgba(54,200,255,.25); transition: transform .15s; }
+  .dl:hover { transform: translateY(-1px); }
+  .dl svg { width: 22px; height: 22px; flex: none; fill: currentColor; }
+  .dl small { display: block; font-size: 11px; color: #5a6272; }
+  .dl b { font-size: 15px; font-weight: 600; }
   .dl.soon { background: rgba(255,255,255,.05); color: var(--ink); border: 1px solid rgba(255,255,255,.14); box-shadow: none; cursor: default; }
   .dl.soon small { color: var(--ink-3); }
-  .credit { margin-top: 18px; font-size: 11.5px; color: var(--ink-3); }
-  .credit a { color: inherit; }
+  #credit { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); width: calc(100vw - 32px); text-align: center;
+            font-size: 11px; color: var(--ink-3); opacity: 0; transition: opacity .5s; }
+  #credit.on { opacity: 1; }
+  #credit a { color: inherit; }
 
   @media (max-width: 720px) {
-    .dls { grid-template-columns: 1fr; }
     #info { right: 16px; bottom: 16px; }
-    #downloads { bottom: 4vh; }
   }
   @media (prefers-reduced-motion: reduce) { .shake { animation: none; } .scroll-cue i { animation: none; } }
 </style>
@@ -224,8 +225,8 @@
         <svg viewBox="0 0 24 24"><path d="M3 5.5 10.4 4.5v7H3zM11.3 4.4 21 3v8.5h-9.7zM3 12.4h7.4v7L3 18.4zM11.3 12.4H21V21l-9.7-1.4z"/></svg>
         <span><small>Download for</small><b>Windows PC</b></span></a>
     </div>
-    <p class="credit">Armor 3D model by <a href="https://sketchfab.com/" rel="noopener">9A Films / Nihar Arora</a>, original by LLlypuk, licensed CC BY 4.0.</p>
   </section>
+  <p id="credit">Armor 3D model by <a href="https://sketchfab.com/" rel="noopener">9A Films / Nihar Arora</a>, original by LLlypuk, licensed CC BY 4.0.</p>
 </div>
 
 <div id="track"></div>
@@ -237,6 +238,8 @@ const FRAMES = 451, FRAME_URL = (i) => `frames/${String(i).padStart(4, '0')}.web
 const FRAME_W = 1920, FRAME_H = 1080;
 const MARK = { stand: 150, raised: 185, holo: 240, loopEnd: 300, aimed: 340, fire: 385, end: 450 };
 const BEAM_HIT = [0.075, 0.1];          // where the beam leaves the frame (fraction of the 16:9 picture)
+// Real download files. Empty = the button says "Coming soon" and does nothing (never a fake download).
+const DOWNLOADS = { android: '', pc: '' };
 const PALM_AT_HOLO = [0.286, 0.214];        // the palm on screen at frame 240 (set by blender/marks.json)
 
 // Scroll sections: vh = how much scrolling each takes.
@@ -318,9 +321,48 @@ const svg = (n) => `<svg viewBox="0 0 24 24">${ICON[n] || ''}</svg>`;
 const track = document.getElementById('track');
 const total = SECTIONS.reduce((a, s) => a + s.vh, 0);
 track.style.height = (total + 100) + 'vh';
+// ===================================================================== playback: a wheel notch queues frames, played at exactly 30 fps
+// `target` is where the reader asked to be, `pos` is what is on screen (both in vh along the page). Every notch moves
+// the target by NOTCH_FRAMES film frames; the player then walks pos there one frame per 1/30 s, forwards or backwards,
+// never skipping. Sections without film (the apps) move FREE_VH per tick. Only a big jump (scrollbar drag, End key,
+// a long touch fling) is caught up faster, so the reader never waits more than ~3 s.
+const FPS = 30, NOTCH_FRAMES = 10, FREE_VH = 3, MAX_LAG_S = 3;
+function sectionAt(y) { for (const s of SECTIONS) { if (y < s.vh) return s; y -= s.vh; } return SECTIONS[SECTIONS.length - 1]; }
+function stepVh(y, dir) {                 // vh of one film frame at y, looking in the direction of travel
+  const s = sectionAt(dir < 0 ? Math.max(0, y - 1e-6) : y);
+  return s.frames ? s.vh / (s.frames[1] - s.frames[0]) : FREE_VH;
+}
+const vhPx = () => Math.max(1, innerHeight) / 100;  // never 0 (a page opened in a background tab can report height 0)
+let pos = scrollY / vhPx(), target = pos, acc = 0, lastT = performance.now();
+addEventListener('wheel', (e) => {
+  if (e.ctrlKey) return;                              // pinch-zoom stays native
+  e.preventDefault();
+  const notches = e.deltaMode === 1 ? e.deltaY / 3 : e.deltaMode === 2 ? e.deltaY * 3 : e.deltaY / 100;
+  const dir = Math.sign(notches);
+  let n = Math.abs(notches) * NOTCH_FRAMES;           // frames to queue (touchpads give fractions)
+  while (n > 1e-6) { const k = Math.min(1, n); target += dir * k * stepVh(target, dir); n -= k; }
+  target = clamp(target, 0, total);
+  scrollTo(0, target * vhPx());                       // keeps the scrollbar honest
+}, { passive: false });
+addEventListener('scroll', () => {                    // scrollbar, keys, touch: they move the target too
+  const y = scrollY / vhPx();
+  if (Math.abs(y - target) * vhPx() > 2) target = clamp(y, 0, total);
+}, { passive: true });
+function tick(now) {
+  acc = Math.min(acc + Math.max(0, now - lastT) / 1000, 0.25); lastT = now;
+  if (!Number.isFinite(pos)) pos = 0;
+  if (!Number.isFinite(target)) target = clamp(scrollY / vhPx(), 0, total);
+  while (acc >= 1 / FPS) {
+    acc -= 1 / FPS;
+    const gap = target - pos;
+    if (Math.abs(gap) < 1e-4) { pos = target; continue; }
+    const dir = Math.sign(gap), st = stepVh(pos, dir);
+    const frames = Math.max(1, Math.abs(gap) / st / (FPS * MAX_LAG_S));   // 1 frame per tick unless far behind
+    pos += dir * Math.min(Math.abs(gap), st * frames);
+  }
+}
 function where() {
-  const vh = innerHeight / 100;
-  let y = scrollY / vh;
+  let y = pos;
   for (const s of SECTIONS) {
     if (y < s.vh) return { s, p: Math.max(0, y / s.vh) };
     y -= s.vh;
@@ -378,101 +420,147 @@ function draw() {
   fctx.fillStyle = '#000';
   fctx.fillRect(0, 0, film.width, film.height);
   fctx.drawImage(im, c.x * dpr, c.y * dpr, FRAME_W * c.s * dpr, FRAME_H * c.s * dpr);
+  decodeAhead(i, i >= shownFrame ? 1 : -1);
   shownFrame = i;
 }
+// decode the next frames in the direction of travel before they are needed, so drawing never stalls
+const decoded = new Set();
+function decodeAhead(i, dir) {
+  for (let k = 1; k <= 15; k++) {
+    const j = i + dir * k, im = imgs[j];
+    if (im && !decoded.has(j) && im.complete && im.naturalWidth && im.decode) { decoded.add(j); im.decode().catch(() => decoded.delete(j)); }
+  }
+}
 
-// ===================================================================== sound (made in the browser, no files)
-let ac = null, soundOn = true;
+// ===================================================================== sound: real recordings + synthesis, one shared space
+// Recordings (public domain, Wikimedia Commons): NASA Artemis II launch pad audio (thrusters), two explosions, a thud.
+// The repulsor and the glass are synthesized. Everything runs through one compressor and an outdoor reverb.
+let ac = null, soundOn = true, bus = null, verb = null;
+const SFX = { thrust: 'sfx/thrust.mp3', blast: 'sfx/blast.mp3', boom: 'sfx/boom.mp3', thud: 'sfx/thud.mp3' }, BUF = {};
 const sndBtn = document.getElementById('sound');
 function audio() {
   if (!soundOn) return null;
-  if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch { return null; } }
+  if (!ac) {
+    try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch { return null; }
+    const comp = ac.createDynamicsCompressor();
+    comp.threshold.value = -16; comp.knee.value = 12; comp.ratio.value = 4; comp.attack.value = 0.004; comp.release.value = 0.25;
+    comp.connect(ac.destination);
+    bus = ac.createGain(); bus.gain.value = 0.9; bus.connect(comp);
+    verb = ac.createConvolver(); verb.buffer = impulse(ac, 2.4, 2.6);       // open night air, a building far behind
+    const wet = ac.createGain(); wet.gain.value = 0.32; verb.connect(wet); wet.connect(comp);
+    for (const [k, url] of Object.entries(SFX))
+      fetch(url).then((r) => r.arrayBuffer()).then((b) => ac.decodeAudioData(b)).then((d) => { BUF[k] = d; }).catch(() => {});
+  }
   if (ac.state === 'suspended') ac.resume();
   return ac;
+}
+function impulse(a, sec, decay) {                    // a stereo reverb tail: decaying noise with early reflections
+  const n = Math.floor(a.sampleRate * sec), b = a.createBuffer(2, n, a.sampleRate);
+  for (let c = 0; c < 2; c++) {
+    const d = b.getChannelData(c);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, decay);
+    for (const [t, g] of [[0.011, 0.5], [0.023, 0.35], [0.041, 0.25], [0.067, 0.18]]) d[Math.floor(t * a.sampleRate) + c * 13] += g;
+  }
+  return b;
+}
+function out(gain, wet = true) {                     // a gain node into the mix (and the reverb)
+  const g = ac.createGain(); g.gain.value = gain; g.connect(bus); if (wet) g.connect(verb); return g;
+}
+function playBuf(name, { at = 0, gain = 1, rate = 1, lp = 0, wet = true } = {}) {
+  const b = BUF[name]; if (!b) return null;
+  const s = ac.createBufferSource(); s.buffer = b; s.playbackRate.value = rate;
+  let node = s;
+  if (lp) { const f = ac.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = lp; s.connect(f); node = f; }
+  node.connect(out(gain, wet)); s.start(ac.currentTime + at);
+  return s;
 }
 function noiseBuf(a, sec) {
   const b = a.createBuffer(1, a.sampleRate * sec, a.sampleRate), d = b.getChannelData(0);
   for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
   return b;
 }
-function playCharge(big = false) {
-  const a = audio(); if (!a) return;
-  const t = a.currentTime, dur = big ? 2.2 : 1.7, out = a.createGain();
-  out.gain.setValueAtTime(0.0001, t);
-  out.gain.exponentialRampToValueAtTime(big ? 0.32 : 0.24, t + dur * 0.85);
-  out.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.35);
-  out.connect(a.destination);
-  // rising whine: two detuned oscillators through a resonant filter, with a tremolo that speeds up
-  const f = a.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 6;
-  f.frequency.setValueAtTime(500, t); f.frequency.exponentialRampToValueAtTime(big ? 5200 : 4200, t + dur);
-  const trem = a.createGain(); trem.gain.value = 0.7;
-  const lfo = a.createOscillator(), lfoG = a.createGain();
-  lfo.frequency.setValueAtTime(6, t); lfo.frequency.exponentialRampToValueAtTime(38, t + dur);
-  lfoG.gain.value = 0.3; lfo.connect(lfoG); lfoG.connect(trem.gain);
-  for (const [type, det] of [['sawtooth', 0], ['square', 7]]) {
-    const o = a.createOscillator(); o.type = type; o.detune.value = det;
-    o.frequency.setValueAtTime(110, t); o.frequency.exponentialRampToValueAtTime(big ? 1500 : 1200, t + dur);
-    o.connect(f); o.start(t); o.stop(t + dur + 0.4);
+function burst({ at = 0, dur = 0.2, type = 'bandpass', f = 1000, q = 1, gain = 0.3, attack = 0.002 }) {
+  const t = ac.currentTime + at, n = ac.createBufferSource(), fl = ac.createBiquadFilter(), g = ac.createGain();
+  n.buffer = noiseBuf(ac, dur + 0.05); fl.type = type; fl.frequency.value = f; fl.Q.value = q;
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(gain, t + attack); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  n.connect(fl); fl.connect(g); g.connect(bus); g.connect(verb); n.start(t); n.stop(t + dur + 0.05);
+}
+function sub(at, f0, f1, dur, gain) {                // a sine body drop: the weight you feel in your chest
+  const t = ac.currentTime + at, o = ac.createOscillator(), g = ac.createGain();
+  o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(gain, t + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(bus); o.start(t); o.stop(t + dur + 0.05);
+}
+function glass(at, amount) {                         // a pane breaking: a sharp crack, then many small pieces ringing
+  burst({ at, dur: 0.09, type: 'highpass', f: 2500, q: 0.7, gain: 0.55 * amount, attack: 0.001 });
+  for (let i = 0; i < 46 * amount; i++) {
+    const t = at + 0.02 + Math.pow(Math.random(), 1.8) * 1.3;
+    burst({ at: t, dur: 0.03 + Math.random() * 0.12, type: 'bandpass', f: 2800 + Math.random() * 7000, q: 18 + Math.random() * 30, gain: 0.05 + Math.random() * 0.1 });
   }
-  // high shimmer
-  const sh = a.createOscillator(), shg = a.createGain(); sh.type = 'sine';
-  sh.frequency.setValueAtTime(1800, t); sh.frequency.exponentialRampToValueAtTime(7800, t + dur);
-  shg.gain.value = 0.05; sh.connect(shg); shg.connect(out); sh.start(t); sh.stop(t + dur + 0.4);
-  f.connect(trem); trem.connect(out); lfo.start(t); lfo.stop(t + dur + 0.4);
+}
+function playCharge(big = false) {                   // the repulsor powering up: a rising whine on a swelling hum
+  const a = audio(); if (!a) return;
+  const t = a.currentTime, dur = big ? 2.2 : 1.7, o = out(1);
+  o.gain.setValueAtTime(0.0001, t); o.gain.exponentialRampToValueAtTime(big ? 0.3 : 0.22, t + dur * 0.9); o.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.3);
+  const f = a.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 3;
+  f.frequency.setValueAtTime(300, t); f.frequency.exponentialRampToValueAtTime(big ? 4200 : 3400, t + dur);
+  for (const det of [0, 9, -7]) {
+    const s = a.createOscillator(); s.type = 'sawtooth'; s.detune.value = det;
+    s.frequency.setValueAtTime(70, t); s.frequency.exponentialRampToValueAtTime(big ? 900 : 700, t + dur);
+    const vib = a.createOscillator(), vg = a.createGain(); vib.frequency.value = 7; vg.gain.value = 6;
+    vib.connect(vg); vg.connect(s.frequency); vib.start(t); vib.stop(t + dur + 0.4);
+    s.connect(f); s.start(t); s.stop(t + dur + 0.4);
+  }
+  f.connect(o);
+  const hum = a.createOscillator(), hg = a.createGain(); hum.frequency.value = 48;
+  hg.gain.setValueAtTime(0.0001, t); hg.gain.exponentialRampToValueAtTime(0.25, t + dur); hg.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.3);
+  hum.connect(hg); hg.connect(bus); hum.start(t); hum.stop(t + dur + 0.4);
+  burst({ at: 0, dur: dur, type: 'highpass', f: 6000, q: 0.5, gain: 0.025, attack: dur * 0.9 });   // air crackling around the palm
 }
 function playHoloBlip() {
   const a = audio(); if (!a) return;
   const t = a.currentTime;
   [880, 1320, 1760].forEach((fr, i) => {
     const o = a.createOscillator(), g = a.createGain(); o.type = 'sine'; o.frequency.value = fr;
-    g.gain.setValueAtTime(0.0001, t + i * 0.06); g.gain.exponentialRampToValueAtTime(0.08, t + i * 0.06 + 0.01);
+    g.gain.setValueAtTime(0.0001, t + i * 0.06); g.gain.exponentialRampToValueAtTime(0.06, t + i * 0.06 + 0.01);
     g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.06 + 0.25);
-    o.connect(g); g.connect(a.destination); o.start(t + i * 0.06); o.stop(t + i * 0.06 + 0.3);
+    o.connect(g); g.connect(bus); g.connect(verb); o.start(t + i * 0.06); o.stop(t + i * 0.06 + 0.3);
   });
+}
+function playLanding() {                             // heavy armour hitting concrete
+  const a = audio(); if (!a) return;
+  playBuf('boom', { gain: 0.9, rate: 0.72, lp: 900 });
+  playBuf('thud', { gain: 1.0, rate: 0.6, lp: 1200 });
+  sub(0, 90, 32, 0.9, 0.9);
+  burst({ at: 0.01, dur: 0.35, type: 'bandpass', f: 1800, q: 0.8, gain: 0.35 });          // the concrete cracks
+  for (let i = 0; i < 14; i++) burst({ at: 0.08 + Math.random() * 0.7, dur: 0.04 + Math.random() * 0.08, type: 'bandpass', f: 600 + Math.random() * 2400, q: 4, gain: 0.04 + Math.random() * 0.06 });   // grit falling
 }
 function playShot() {
   const a = audio(); if (!a) return;
-  const t = a.currentTime;
-  // the blast: falling zap + low thump + noise burst
-  const z = a.createOscillator(), zg = a.createGain(); z.type = 'sawtooth';
-  z.frequency.setValueAtTime(2400, t); z.frequency.exponentialRampToValueAtTime(90, t + 0.45);
-  zg.gain.setValueAtTime(0.35, t); zg.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
-  const zf = a.createBiquadFilter(); zf.type = 'lowpass'; zf.frequency.value = 3000;
-  z.connect(zf); zf.connect(zg); zg.connect(a.destination); z.start(t); z.stop(t + 0.55);
-  const th = a.createOscillator(), tg = a.createGain(); th.type = 'sine';
-  th.frequency.setValueAtTime(120, t); th.frequency.exponentialRampToValueAtTime(38, t + 0.6);
-  tg.gain.setValueAtTime(0.7, t); tg.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
-  th.connect(tg); tg.connect(a.destination); th.start(t); th.stop(t + 0.75);
-  const n = a.createBufferSource(), ng = a.createGain(), nf = a.createBiquadFilter();
-  n.buffer = noiseBuf(a, 0.6); nf.type = 'bandpass'; nf.frequency.value = 1400; nf.Q.value = 0.7;
-  ng.gain.setValueAtTime(0.5, t); ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
-  n.connect(nf); nf.connect(ng); ng.connect(a.destination); n.start(t);
-  // glass: a crack, then tinkles
-  const c = a.createBufferSource(), cg = a.createGain(), cf = a.createBiquadFilter();
-  c.buffer = noiseBuf(a, 0.25); cf.type = 'highpass'; cf.frequency.value = 3500;
-  cg.gain.setValueAtTime(0.6, t + 0.04); cg.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
-  c.connect(cf); cf.connect(cg); cg.connect(a.destination); c.start(t + 0.04);
-  for (let i = 0; i < 16; i++) {
-    const at = t + 0.12 + Math.random() * 0.9, o = a.createOscillator(), g = a.createGain();
-    o.type = 'sine'; o.frequency.value = 2500 + Math.random() * 5000;
-    g.gain.setValueAtTime(0.0001, at); g.gain.exponentialRampToValueAtTime(0.05 + Math.random() * 0.05, at + 0.004);
-    g.gain.exponentialRampToValueAtTime(0.0001, at + 0.12 + Math.random() * 0.2);
-    o.connect(g); g.connect(a.destination); o.start(at); o.stop(at + 0.4);
-  }
+  playBuf('blast', { gain: 1.0, rate: 1.0 });
+  playBuf('boom', { gain: 0.55, rate: 0.85, lp: 700, at: 0.02 });
+  sub(0, 140, 38, 0.7, 0.8);
+  const z = a.createOscillator(), zg = a.createGain(), zf = a.createBiquadFilter(), t = a.currentTime;   // the beam itself
+  z.type = 'sawtooth'; z.frequency.setValueAtTime(1900, t); z.frequency.exponentialRampToValueAtTime(110, t + 0.4);
+  zf.type = 'lowpass'; zf.frequency.value = 2600;
+  zg.gain.setValueAtTime(0.18, t); zg.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
+  z.connect(zf); zf.connect(zg); zg.connect(bus); zg.connect(verb); z.start(t); z.stop(t + 0.5);
+  glass(0.05, 1);
 }
 let rumble = null;
-function setRumble(level) {                         // boot thrusters while he flies down
+function setRumble(level) {                          // the boot thrusters while he flies down (recorded rocket roar)
   const a = ac && soundOn ? ac : null;
-  if (!a) return;
+  if (!a || !BUF.thrust) return;
   if (!rumble) {
-    const n = a.createBufferSource(); n.buffer = noiseBuf(a, 2); n.loop = true;
-    const f = a.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 520;
+    const s = a.createBufferSource(); s.buffer = BUF.thrust; s.loop = true;
+    const f = a.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 900;
     const g = a.createGain(); g.gain.value = 0;
-    n.connect(f); f.connect(g); g.connect(a.destination); n.start();
-    rumble = { g, f };
+    s.connect(f); f.connect(g); g.connect(bus); s.start();
+    rumble = { g, f, s };
   }
-  rumble.g.gain.setTargetAtTime(level * 0.22, a.currentTime, 0.08);
-  rumble.f.frequency.setTargetAtTime(300 + level * 600, a.currentTime, 0.1);
+  rumble.g.gain.setTargetAtTime(level * 0.8, a.currentTime, 0.08);
+  rumble.f.frequency.setTargetAtTime(500 + level * 2500, a.currentTime, 0.1);
+  rumble.s.playbackRate.setTargetAtTime(0.85 + level * 0.25, a.currentTime, 0.2);
 }
 sndBtn.addEventListener('click', () => {
   soundOn = !soundOn;
@@ -485,6 +573,8 @@ document.getElementById('enter').addEventListener('click', () => {
   audio();
   scrollTo({ top: innerHeight * 0.7, behavior: 'smooth' });
 });
+addEventListener('pointerdown', () => audio(), { once: true });   // browsers only allow sound after a first tap or click
+addEventListener('keydown', () => audio(), { once: true });
 
 // ===================================================================== the apps (design only)
 const holo = document.getElementById('holo');
@@ -571,81 +661,101 @@ function place(el, t, holoAmt, fade = 1) {
 }
 function hide(el) { el.style.opacity = 0; el.classList.remove('live'); }
 
-// ===================================================================== cracks (canvas), drawn once per shot
+// ===================================================================== the shot: only the spot he hits breaks
+// The beam punches one hole in the screen glass. Cracks run out a little way from its rim, broken glass hangs at the
+// edge, and the downloads sit inside the hole. Nothing else on the screen breaks.
 const cracks = document.getElementById('cracks');
 const cctx = cracks.getContext('2d');
-let shot = false, shotAt = 0, crackLines = null;
-function makeCracks() {
+let shot = false, shotAt = 0, hole = null;
+function makeHole() {
+  const W = innerWidth, H = innerHeight;
+  const R = clamp(Math.min(W, H) * 0.3, 175, 280);
   const [hx, hy] = toScreen(...BEAM_HIT);
-  const ox = clamp(hx, 24, innerWidth - 24), oy = clamp(hy, 24, innerHeight - 24);
+  const cx = clamp(hx + R * 0.55, R + 12, W - R - 12), cy = clamp(hy + R * 0.5, R + 12, H - R - 12);
+  let ix = hx, iy = hy;                               // the impact, kept inside the hole
+  const dd = Math.hypot(ix - cx, iy - cy), lim = R * 0.6;
+  if (dd > lim) { ix = cx + (ix - cx) * lim / dd; iy = cy + (iy - cy) * lim / dd; }
+  const N = 26, rim = [];
+  for (let i = 0; i < N; i++) {
+    const a = (i / N) * Math.PI * 2 + (Math.random() - 0.5) * 0.18, r = R * (0.9 + Math.random() * 0.22);
+    rim.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r, a]);
+  }
   const lines = [];
-  const reach = Math.hypot(innerWidth, innerHeight);
-  const n = 22;
-  for (let i = 0; i < n; i++) {
-    let ang = (i / n) * Math.PI * 2 + Math.random() * 0.25, x = ox, y = oy;
-    const len = reach * (0.25 + Math.random() * 0.75), seg = [[x, y]];
-    let d = 0;
-    while (d < len) {
-      const step = 18 + Math.random() * 46;
-      ang += (Math.random() - 0.5) * 0.5;
-      x += Math.cos(ang) * step; y += Math.sin(ang) * step; d += step;
-      seg.push([x, y]);
-      if (Math.random() < 0.12) lines.push({ pts: branch(x, y, ang + (Math.random() < .5 ? 1 : -1) * (0.5 + Math.random() * 0.6), len * 0.3), w: 1 });
-    }
-    lines.push({ pts: seg, w: 1.6 });
+  for (const [x, y, a] of rim) if (Math.random() < 0.75) lines.push({ pts: branch(x, y, a + (Math.random() - 0.5) * 0.5, R * (0.15 + Math.random() * 0.55)), w: 1.3 });
+  for (const k of [1.22, 1.45]) {                     // broken arcs of stress around the hole
+    const pts = [], a0 = Math.random() * 6.28, span = 1.2 + Math.random() * 1.6;
+    for (let a = a0; a <= a0 + span; a += 0.18) pts.push([cx + Math.cos(a) * R * k * (0.95 + Math.random() * 0.1), cy + Math.sin(a) * R * k * (0.95 + Math.random() * 0.1)]);
+    lines.push({ pts, w: 1 });
   }
-  // rings around the hit
-  for (const r of [26, 58, 104]) {
-    const pts = [];
-    for (let a = 0; a <= Math.PI * 2 + 0.01; a += 0.35) pts.push([ox + Math.cos(a) * r * (0.85 + Math.random() * 0.3), oy + Math.sin(a) * r * (0.85 + Math.random() * 0.3)]);
-    lines.push({ pts, w: 1.1 });
+  const shards = [];                                   // glass still hanging at the rim
+  for (let i = 0; i < N; i++) if (Math.random() < 0.45) {
+    const p = rim[i], q = rim[(i + 1) % N], k = 0.8 + Math.random() * 0.1;
+    shards.push([p, q, [cx + ((p[0] + q[0]) / 2 - cx) * k, cy + ((p[1] + q[1]) / 2 - cy) * k]]);
   }
-  return { ox, oy, lines };
+  return { cx, cy, ix, iy, R, rim, lines, shards };
 }
 function branch(x, y, ang, len) {
   const pts = [[x, y]]; let d = 0;
   while (d < len) { const s = 14 + Math.random() * 30; ang += (Math.random() - .5) * .6; x += Math.cos(ang) * s; y += Math.sin(ang) * s; d += s; pts.push([x, y]); }
   return pts;
 }
+function placeDownloads() {
+  if (!hole) return;
+  const w = downloads.offsetWidth, h = downloads.offsetHeight;
+  const k = Math.min(1.2, (0.86 * hole.R) / Math.hypot(w / 2, h / 2));
+  downloads.style.transform = `translate(${hole.cx - w / 2}px, ${hole.cy - h / 2}px) scale(${k})`;
+}
 function drawCracks(prog) {
   const dpr = cracks.width / innerWidth;
   cctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   cctx.clearRect(0, 0, innerWidth, innerHeight);
-  if (!crackLines) return;
-  const { ox, oy, lines } = crackLines;
-  // the broken corner: a dark hole of shattered glass
-  const hole = 70 + 80 * clamp(prog * 3);
-  const g = cctx.createRadialGradient(ox, oy, 0, ox, oy, hole);
-  g.addColorStop(0, 'rgba(8,10,14,.95)'); g.addColorStop(0.55, 'rgba(20,26,34,.75)'); g.addColorStop(1, 'rgba(20,26,34,0)');
-  cctx.fillStyle = g; cctx.beginPath(); cctx.arc(ox, oy, hole, 0, Math.PI * 2); cctx.fill();
+  if (!hole) return;
+  const { cx, cy, ix, iy, R, rim, lines, shards } = hole;
+  const cp = clamp(prog * 2.2);                        // cracks race out first
   cctx.lineCap = 'round'; cctx.lineJoin = 'round';
-  for (const pass of [0, 1]) {
-    for (const l of lines) {
-      const n = Math.max(2, Math.floor(l.pts.length * clamp(prog * 1.6)));
-      cctx.beginPath();
-      cctx.moveTo(l.pts[0][0] + pass * 0.8, l.pts[0][1] + pass * 0.8);
-      for (let i = 1; i < n; i++) cctx.lineTo(l.pts[i][0] + pass * 0.8, l.pts[i][1] + pass * 0.8);
-      cctx.strokeStyle = pass ? 'rgba(255,255,255,.85)' : 'rgba(30,36,46,.75)';
-      cctx.lineWidth = pass ? l.w * 0.6 : l.w;
-      cctx.stroke();
-    }
+  for (const pass of [0, 1]) for (const l of lines) {
+    const n = Math.max(2, Math.floor(l.pts.length * cp));
+    cctx.beginPath();
+    cctx.moveTo(l.pts[0][0] + pass * 0.8, l.pts[0][1] + pass * 0.8);
+    for (let i = 1; i < n; i++) cctx.lineTo(l.pts[i][0] + pass * 0.8, l.pts[i][1] + pass * 0.8);
+    cctx.strokeStyle = pass ? 'rgba(255,255,255,.85)' : 'rgba(30,36,46,.75)';
+    cctx.lineWidth = pass ? l.w * 0.6 : l.w;
+    cctx.stroke();
+  }
+  const open = smooth(clamp(prog * 1.6));             // then the glass falls out, from the impact outwards
+  if (open <= 0) return;
+  const P = (pt) => [ix + (pt[0] - ix) * open, iy + (pt[1] - iy) * open];
+  cctx.beginPath();
+  rim.forEach((pt, i) => { const [x, y] = P(pt); i ? cctx.lineTo(x, y) : cctx.moveTo(x, y); });
+  cctx.closePath();
+  const g = cctx.createRadialGradient(cx, cy, 0, cx, cy, R * 1.1);
+  g.addColorStop(0, 'rgba(10,22,34,.97)'); g.addColorStop(0.7, 'rgba(5,10,16,.97)'); g.addColorStop(1, 'rgba(2,4,7,.98)');
+  cctx.fillStyle = g; cctx.fill();
+  cctx.save(); cctx.shadowColor = 'rgba(54,200,255,.8)'; cctx.shadowBlur = 18;
+  cctx.strokeStyle = 'rgba(170,230,255,.9)'; cctx.lineWidth = 1.6; cctx.stroke(); cctx.restore();
+  for (const [p, q, m] of shards) {
+    const a = P(p), b = P(q), c = P(m);
+    cctx.beginPath(); cctx.moveTo(...a); cctx.lineTo(...b); cctx.lineTo(...c); cctx.closePath();
+    cctx.fillStyle = 'rgba(190,225,255,.10)'; cctx.fill();
+    cctx.strokeStyle = 'rgba(235,248,255,.55)'; cctx.lineWidth = 0.8; cctx.stroke();
   }
 }
 
 // ===================================================================== main loop
-const intro = document.getElementById('intro'), sect = document.getElementById('sect'), downloads = document.getElementById('downloads');
+const intro = document.getElementById('intro'), sect = document.getElementById('sect'), downloads = document.getElementById('downloads'), credit = document.getElementById('credit');
 const SECT_TEXT = {
   pc: ['Jarvis for PC', 'Everything, on your own computer', 'Click a mode to see what it does.'],
   android: ['Jarvis for Android', 'Your PC, in your pocket', 'Tap a section to see what it does.'],
   ios: ['Jarvis for iPhone', 'Coming soon', 'Tap a section to see what it will do.'],
 };
-let current = '', charged = false, blipped = false, bigCharged = false, loopT0 = performance.now();
+let current = '', landed = false, charged = false, blipped = false, bigCharged = false, loopT0 = performance.now();
 function setSect(id) {
   const t = SECT_TEXT[id];
   if (t) { sect.querySelector('small').textContent = t[0]; sect.querySelector('h2').textContent = t[1]; sect.querySelector('p').textContent = t[2]; }
   sect.style.opacity = t ? 1 : 0;
 }
-function frame() {
+function frame(now) {
+  tick(now || performance.now());
   const { s, p } = where();
   const id = s.id;
   if (id !== current) {
@@ -660,7 +770,7 @@ function frame() {
   const appTime = ['open', 'pc', 'android', 'ios', 'close'].includes(id);
   if (s.frames) {
     const [a, b] = s.frames;
-    want = lerp(a, b, id === 'fly' ? smooth(p) * 0.7 + p * 0.3 : p);
+    want = lerp(a, b, p);                     // linear: one notch is always the same number of frames
   } else if (id === 'start') {
     want = 0;
   } else if (appTime) {                       // the hover loop plays by time behind the apps
@@ -673,7 +783,9 @@ function frame() {
   film.classList.toggle('dim', ['pc', 'android', 'ios'].includes(id));
 
   // sounds tied to the film
-  setRumble(id === 'fly' && want < 104 ? 1 - want / 140 : 0);
+  setRumble(id === 'fly' && want < 93 ? 1 - want / 120 : 0);       // thrusters cut out as the feet touch (frame 93)
+  if (id === 'fly' && want >= 97 && !landed) { landed = true; playLanding(); }   // the fist hits the floor at 98
+  if (want < 88) landed = false;
   if (id === 'charge' && want > 190 && !charged) { charged = true; playCharge(false); }
   if ((id === 'start' || id === 'fly') && charged) charged = false;
   if (id === 'open' && !blipped) { blipped = true; playHoloBlip(); }
@@ -710,16 +822,19 @@ function frame() {
   // the shot
   const firing = id === 'fire' || id === 'get';
   if (firing && want >= MARK.fire && !shot) {
-    shot = true; shotAt = performance.now(); crackLines = makeCracks();
+    shot = true; shotAt = performance.now(); hole = makeHole(); placeDownloads();
     playShot();
     const st = document.getElementById('shake'); st.classList.remove('shake'); void st.offsetWidth; st.classList.add('shake');
-    const fl = document.getElementById('flash'); const [hx, hy] = toScreen(...BEAM_HIT);
-    fl.style.setProperty('--fx', (100 * hx / innerWidth) + '%'); fl.style.setProperty('--fy', (100 * hy / innerHeight) + '%');
+    const fl = document.getElementById('flash');
+    fl.style.setProperty('--fx', (100 * hole.ix / innerWidth) + '%'); fl.style.setProperty('--fy', (100 * hole.iy / innerHeight) + '%');
     fl.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 600, easing: 'ease-out' });
   }
-  if (!firing || want < MARK.fire - 2) { if (shot) { shot = false; crackLines = null; drawCracks(0); } }
-  if (shot) drawCracks(clamp((performance.now() - shotAt) / 700));
-  downloads.classList.toggle('on', id === 'get' || (id === 'fire' && p > 0.55));
+  if (!firing || want < MARK.fire - 2) { if (shot) { shot = false; hole = null; drawCracks(0); } }
+  const since = (performance.now() - shotAt) / 700;
+  if (shot) drawCracks(clamp(since));
+  const showDl = shot && since > 0.6 && (id === 'get' || (id === 'fire' && p > 0.55));
+  downloads.classList.toggle('on', showDl);
+  credit.classList.toggle('on', showDl);
 
   requestAnimationFrame(frame);
 }
@@ -736,7 +851,14 @@ function beamCone(cone, el, amt) {
   cone.style.opacity = 0.35 * amt;
 }
 
-addEventListener('resize', () => { fit(); if (shot) crackLines = makeCracks(); draw(); });
+addEventListener('resize', () => { fit(); if (shot) { hole = makeHole(); placeDownloads(); } draw(); });
+// download buttons: a real file, or an honest "Coming soon"
+for (const [k, url] of Object.entries(DOWNLOADS)) {
+  const a = document.getElementById('dl-' + k);
+  if (url) { a.href = url; continue; }
+  a.removeAttribute('href'); a.removeAttribute('download'); a.classList.add('soon'); a.setAttribute('aria-disabled', 'true');
+  a.querySelector('small').textContent = 'Coming soon';
+}
 fit();
 requestAnimationFrame(frame);
 </script>
