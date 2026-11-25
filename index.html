@@ -53,6 +53,15 @@
            background: rgba(20,24,32,.7); border: 1px solid rgba(255,255,255,.12); display: grid; place-items: center;
            backdrop-filter: blur(8px); }
   .sound svg { width: 20px; height: 20px; }
+  /* browsers allow sound only after a first tap, click or key: this asks for that tap, then goes away */
+  .tapsound { position: fixed; top: 16px; right: 66px; z-index: 50; height: 42px; padding: 0 16px; border-radius: 999px;
+              background: rgba(20,24,32,.7); border: 1px solid rgba(90,210,255,.45); backdrop-filter: blur(8px);
+              font-size: 13px; font-weight: 600; color: var(--ink); box-shadow: 0 0 24px rgba(54,200,255,.25);
+              animation: tap 2.2s ease-in-out infinite; transition: opacity .4s; }
+  .tapsound.gone { opacity: 0; pointer-events: none; animation: none; }
+  @keyframes tap { 50% { box-shadow: 0 0 34px rgba(54,200,255,.55); } }
+  .scroll-cue { transition: opacity .5s; }
+  .scroll-cue.gone { opacity: 0; }
   #loadbar { position: fixed; left: 0; top: 0; height: 2px; background: var(--arc); width: 0; z-index: 60; transition: width .2s, opacity .6s; }
 
   /* ---------- hologram ---------- */
@@ -182,6 +191,7 @@
 </head>
 <body>
 <div id="loadbar"></div>
+<button class="tapsound" id="tapsound">Tap for sound</button>
 <button class="sound" id="sound" aria-label="Sound on or off" title="Sound">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path id="snd-on" d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/><path id="snd-off" d="m16 9 5 6m0-6-5 6" style="display:none"/></svg>
 </button>
@@ -194,16 +204,7 @@
     <canvas id="cracks" aria-hidden="true"></canvas>
   </div>
 
-  <section id="intro">
-    <div>
-      <div class="brand">JARVIS<span>.</span></div>
-      <p class="tag">Your own AI assistant, on your PC and your phone. Scroll, and let it introduce itself.</p>
-      <button class="enter" id="enter">Enter with sound
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
-      <p class="hint">or just scroll</p>
-    </div>
-    <div class="scroll-cue">Scroll<i></i></div>
-  </section>
+  <div class="scroll-cue" id="cue">Scroll<i></i></div>
 
   <div id="sect"><small></small><h2></h2><p></p></div>
 
@@ -244,7 +245,6 @@ const PALM_AT_HOLO = [0.286, 0.214];        // the palm on screen at frame 240 (
 
 // Scroll sections: vh = how much scrolling each takes.
 const SECTIONS = [
-  { id: 'start',   vh: 60 },
   { id: 'fly',     vh: 240, frames: [0, MARK.stand] },
   { id: 'charge',  vh: 160, frames: [MARK.stand, MARK.holo] },
   { id: 'open',    vh: 110 },               // hologram grows from the palm to the screen
@@ -569,12 +569,11 @@ sndBtn.addEventListener('click', () => {
   if (!soundOn && rumble) rumble.g.gain.value = 0;
   if (soundOn) audio();
 });
-document.getElementById('enter').addEventListener('click', () => {
-  audio();
-  scrollTo({ top: innerHeight * 0.7, behavior: 'smooth' });
-});
-addEventListener('pointerdown', () => audio(), { once: true });   // browsers only allow sound after a first tap or click
-addEventListener('keydown', () => audio(), { once: true });
+const tapsound = document.getElementById('tapsound');
+tapsound.addEventListener('click', () => audio());
+// browsers only allow sound after a first tap, click or key press, so every one of those (re)starts it
+for (const ev of ['pointerdown', 'touchend', 'keydown']) addEventListener(ev, () => audio(), { passive: true });
+audio();                                             // works at once where the browser allows it (e.g. a reload after a click)
 
 // ===================================================================== the apps (design only)
 const holo = document.getElementById('holo');
@@ -798,7 +797,7 @@ function drawCracks(el) {                                // el = seconds since t
 }
 
 // ===================================================================== main loop
-const intro = document.getElementById('intro'), sect = document.getElementById('sect'), downloads = document.getElementById('downloads'), credit = document.getElementById('credit');
+const cue = document.getElementById('cue'), sect = document.getElementById('sect'), downloads = document.getElementById('downloads'), credit = document.getElementById('credit');
 const SECT_TEXT = {
   pc: ['Jarvis for PC', 'Everything, on your own computer', 'Click a mode to see what it does.'],
   android: ['Jarvis for Android', 'Your PC, in your pocket', 'Tap a section to see what it does.'],
@@ -820,7 +819,8 @@ function frame(now) {
     current = id;
     setSect(id);
   }
-  intro.classList.toggle('gone', !(id === 'start' && p < 0.6));
+  cue.classList.toggle('gone', pos > 4);
+  tapsound.classList.toggle('gone', !soundOn || !!(ac && ac.state === 'running'));
 
   // which picture of the film
   const appTime = ['open', 'pc', 'android', 'ios', 'close'].includes(id);
