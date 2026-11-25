@@ -240,7 +240,10 @@ const FRAME_W = 1920, FRAME_H = 1080;
 const MARK = { stand: 150, raised: 185, holo: 240, loopEnd: 300, aimed: 340, fire: 385, end: 450 };
 const BEAM_HIT = [0.075, 0.1];          // where the beam leaves the frame (fraction of the 16:9 picture)
 // Real download files. Empty = the button says "Coming soon" and does nothing (never a fake download).
-const DOWNLOADS = { android: '', pc: '' };
+const DOWNLOADS = {
+  android: 'https://github.com/milanlajhner2-maker/jarvis-site/releases/latest/download/Jarvis.apk',
+  pc: 'https://github.com/milanlajhner2-maker/jarvis-site/releases/latest/download/Jarvis.exe',
+};
 const PALM_AT_HOLO = [0.286, 0.214];        // the palm on screen at frame 240 (set by blender/marks.json)
 
 // Scroll sections: vh = how much scrolling each takes.

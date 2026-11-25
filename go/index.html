@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Jarvis">
+<meta name="theme-color" content="#000000">
+<title>Jarvis</title>
+<style>
+  :root { --ink: #eef1f6; --ink-2: #a9b1bf; --ink-3: #6c7586; --arc: #36c8ff; --line: rgba(255,255,255,.1); --red: #ff6b6b; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: #000; color: var(--ink); }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased;
+         display: grid; place-items: center; padding: 24px 16px; }
+  main { width: min(420px, 100%); text-align: center; }
+  .orb { width: 120px; height: 120px; margin: 0 auto; border-radius: 50%;
+         background: radial-gradient(circle at 38% 32%, #d4f6ff, #5ce1ff 38%, #0b5d86 72%, #02141d);
+         box-shadow: 0 0 60px rgba(54,200,255,.45), inset 0 0 30px rgba(255,255,255,.15); animation: breathe 2.4s ease-in-out infinite; }
+  .orb.off { background: radial-gradient(circle at 38% 32%, #3a4250, #1b2029 60%, #07090c); box-shadow: none; animation: none; }
+  @keyframes breathe { 50% { transform: scale(1.05); box-shadow: 0 0 90px rgba(54,200,255,.6), inset 0 0 30px rgba(255,255,255,.2); } }
+  .label { margin-top: 22px; font-size: 12px; letter-spacing: .3em; text-transform: uppercase; color: var(--arc); }
+  h1 { margin-top: 8px; font-size: 28px; letter-spacing: -0.02em; }
+  p { margin-top: 8px; color: var(--ink-2); font-size: 15px; line-height: 1.5; }
+  .btns { margin-top: 26px; display: grid; gap: 10px; }
+  .btn { display: block; padding: 15px 18px; border-radius: 14px; font-size: 16px; font-weight: 600; text-decoration: none;
+         border: 1px solid var(--line); color: var(--ink); background: rgba(255,255,255,.04); cursor: pointer; }
+  .btn.main { background: #fff; color: #000; border-color: #fff; box-shadow: 0 0 40px rgba(54,200,255,.25); }
+  .btn:focus-visible { outline: 3px solid var(--arc); outline-offset: 3px; }
+  .tip { margin-top: 22px; padding: 14px 16px; border-radius: 14px; border: 1px solid var(--line); text-align: left; font-size: 13.5px;
+         color: var(--ink-2); line-height: 1.5; }
+  .tip b { color: var(--ink); }
+  .err { color: var(--red); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <div class="orb" id="orb"></div>
+  <div class="label">j.a.r.v.i.s.</div>
+  <h1 id="title">Finding your PC…</h1>
+  <p id="text">Looking up where your PC is right now.</p>
+  <div class="btns">
+    <a class="btn main" id="app" hidden>Open in the Jarvis app</a>
+    <a class="btn" id="web" hidden>Use Jarvis in this browser</a>
+    <button class="btn" id="retry" hidden>Try again</button>
+  </div>
+  <div class="tip" id="tip" hidden></div>
+</main>
+<script>
+// This page never changes and holds no secret. The PC's key arrives after '#' in the link (browsers never send that
+// part to any server). With it, the page derives the PC's rendezvous topic, reads the PC's current tunnel address
+// (sealed with AES-256-GCM, the same scheme as the apps), and opens it. Only ntfy.sh is contacted, and it only ever
+// sees a hash of the key, never the key.
+const $ = (id) => document.getElementById(id);
+const hex = ((location.hash + location.search).match(/[#?&]k=([0-9a-fA-F]{64})/) || [])[1]?.toLowerCase();
+const isAndroid = /Android/i.test(navigator.userAgent);
+const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+
+function show(title, text, { off = false, error = false } = {}) {
+  $('title').textContent = title; $('text').textContent = text;
+  $('text').classList.toggle('err', error); $('orb').classList.toggle('off', off);
+}
+const unhex = (h) => Uint8Array.from(h.match(/../g), (b) => parseInt(b, 16));
+const tohex = (a) => Array.from(a, (b) => b.toString(16).padStart(2, '0')).join('');
+async function sha(raw, tag) {
+  const t = new TextEncoder().encode(tag), d = new Uint8Array(raw.length + t.length);
+  d.set(raw); d.set(t, raw.length);
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', d));
+}
+async function findPc() {
+  const raw = unhex(hex);
+  const topic = 'jv' + tohex(await sha(raw, 'jarvis-rendezvous-v1')).slice(0, 40);
+  const key = await crypto.subtle.importKey('raw', await sha(raw, 'jarvis-e2e-v1'), 'AES-GCM', false, ['decrypt']);
+  const r = await fetch(`https://ntfy.sh/${topic}/json?poll=1&since=12h`, { cache: 'no-store' });
+  let best = null;
+  for (const line of (await r.text()).split('\n')) {
+    try {
+      const m = JSON.parse(line);
+      if (m.event !== 'message' || !m.message) continue;
+      const blob = Uint8Array.from(atob(m.message), (c) => c.charCodeAt(0));
+      const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: blob.slice(0, 12) }, key, blob.slice(12));
+      const a = JSON.parse(new TextDecoder().decode(plain));
+      if (a.u && /^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/.test(a.u) && (!best || a.t > best.t)) best = a;
+    } catch { /* not ours, or not a message */ }
+  }
+  return best;
+}
+async function reachable(url) {                          // the tunnel answers = the PC is on
+  const c = new AbortController(), t = setTimeout(() => c.abort(), 8000);
+  try { await fetch(url + '/app', { mode: 'no-cors', cache: 'no-store', signal: c.signal }); return true; }
+  catch { return false; } finally { clearTimeout(t); }
+}
+let timer = null;
+async function run() {
+  clearTimeout(timer);
+  $('retry').hidden = true;
+  if (!hex) { show('This link is incomplete', 'Scan the QR code in Jarvis on your PC again.', { off: true, error: true }); return; }
+  if (!crypto?.subtle) { show('Please open this link in Safari or Chrome', 'This browser cannot open the secure connection.', { off: true, error: true }); return; }
+  show('Finding your PC…', 'Looking up where your PC is right now.');
+  let a = null;
+  try { a = await findPc(); } catch { /* offline phone, or the rendezvous is down */ }
+  if (!a || !(await reachable(a.u))) {
+    show('Your PC is not online', 'Open Jarvis on your PC (or wake it up). This page keeps trying by itself.', { off: true });
+    $('retry').hidden = false;
+    timer = setTimeout(run, 8000);
+    return;
+  }
+  const web = `${a.u}/app#k=${hex}`;
+  if (isAndroid) {                                       // Android: the app, or the browser
+    show('Your PC is online', 'Open it in the Jarvis app, or use it right here in the browser.');
+    $('app').href = `jarvis://pair?k=${hex}`; $('app').hidden = false;
+    $('web').href = web; $('web').hidden = false;
+    return;
+  }
+  if (isIOS && !standalone) {                            // iPhone in Safari: one tap, and the Home Screen tip below
+    show('Your PC is online', 'Tap to open Jarvis.');
+    $('web').href = web; $('web').textContent = 'Open Jarvis'; $('web').classList.add('main'); $('web').hidden = false;
+    return;
+  }
+  show('Connecting…', 'Opening Jarvis on your PC.');
+  location.replace(web);                                 // Home Screen icon and computers: straight into Jarvis
+}
+$('retry').addEventListener('click', run);
+if (isIOS && !standalone) {
+  $('tip').hidden = false;
+  $('tip').innerHTML = '<b>Tip for iPhone:</b> tap Share, then <b>Add to Home Screen</b>. Jarvis then opens with one tap, '
+    + 'and this link never changes. Keep it private: it opens your PC.';
+}
+run();
+</script>
+</body>
+</html>
